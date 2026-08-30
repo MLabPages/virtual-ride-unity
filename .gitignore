@@ -5,6 +5,8 @@
 [Bb]uild/
 [Bb]uilds/
 [Ll]ogs/
+!Docs/dev/logs/
+!Docs/dev/logs/*.md
 [Uu]ser[Ss]ettings/
 [Mm]emoryCaptures/
 [Rr]ecordings/

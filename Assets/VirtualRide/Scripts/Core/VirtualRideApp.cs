@@ -13,11 +13,13 @@ namespace VirtualRide.Core
         private RideSession _session;
         private KeyboardRideInput _keyboardInput;
         private CameraCadenceInput _cameraInput;
+        private ResearchSessionRecorder _researchRecorder;
         private IRideInputSource _activeInput;
         private IRideInputSource _externalInput;
         private float _displaySpeed;
         private bool _paused;
         private bool _helpVisible = true;
+        private bool _researchPanelVisible;
 
         public static VirtualRideApp Instance { get; private set; }
 
@@ -25,6 +27,7 @@ namespace VirtualRide.Core
         public RideSession Session => _session;
         public CameraCadenceInput CameraInput => _cameraInput;
         public KeyboardRideInput KeyboardInput => _keyboardInput;
+        public ResearchSessionRecorder ResearchRecorder => _researchRecorder;
         public IRideInputSource ActiveInput => _activeInput;
         public RideInputSample ActiveSample => _activeInput != null
             ? _activeInput.Current
@@ -35,6 +38,7 @@ namespace VirtualRide.Core
         public float RouteProgress => _route != null ? _route.GetProgress01(RouteDistance) : 0f;
         public bool IsPaused => _paused;
         public bool HelpVisible => _helpVisible;
+        public bool ResearchPanelVisible => _researchPanelVisible;
         public bool WindEnabled => _rideController != null && _rideController.WindEnabled;
         public string InputModeName => _activeInput != null ? _activeInput.DisplayName : "入力なし";
 
@@ -52,6 +56,7 @@ namespace VirtualRide.Core
 
             _route = new RideRoute();
             _session = new RideSession();
+            _researchRecorder = new ResearchSessionRecorder();
             ScenicWorldBuilder.Build(_route);
 
             GameObject rider = new GameObject("Rider");
@@ -87,6 +92,7 @@ namespace VirtualRide.Core
 
             _rideController.SetSpeed(_displaySpeed);
             _session.Tick(_displaySpeed, Time.deltaTime);
+            _researchRecorder.Tick(unscaledDeltaTime, this);
         }
 
         public void UseKeyboardInput()
@@ -123,11 +129,41 @@ namespace VirtualRide.Core
         public void ToggleHelp()
         {
             _helpVisible = !_helpVisible;
+            if (_helpVisible)
+            {
+                _researchPanelVisible = false;
+            }
         }
 
         public void HideHelp()
         {
             _helpVisible = false;
+        }
+
+        public void ToggleResearchPanel()
+        {
+            _researchPanelVisible = !_researchPanelVisible;
+            if (_researchPanelVisible)
+            {
+                _helpVisible = false;
+            }
+        }
+
+        public void HideResearchPanel()
+        {
+            _researchPanelVisible = false;
+        }
+
+        public bool BeginResearchSession(string participantId, string condition)
+        {
+            _session.Reset();
+            _paused = false;
+            return _researchRecorder.Start(participantId, condition, this);
+        }
+
+        public bool EndResearchSession(string reason = "completed")
+        {
+            return _researchRecorder.Stop(this, reason);
         }
 
         public void ToggleFullscreen()
@@ -205,6 +241,7 @@ namespace VirtualRide.Core
         {
             if (ReferenceEquals(Instance, this))
             {
+                _researchRecorder?.Stop(this, "application_closed");
                 _activeInput?.Deactivate();
                 Instance = null;
             }

@@ -39,6 +39,22 @@ namespace VirtualRide.Core
 
             _app.HideHelp();
             _app.UseKeyboardInput();
+            _app.ResearchRecorder.SetDataDirectoryForTesting(Path.Combine(_outputDirectory, "research-data"));
+            if (!_app.BeginResearchSession("SMOKE01", "automated"))
+            {
+                WriteResult(false, _app.ResearchRecorder.LastMessage, helpScreenshot, string.Empty, string.Empty);
+                Debug.LogError("VIRTUAL_RIDE_SMOKE_TEST: FAIL - " + _app.ResearchRecorder.LastMessage);
+                Application.Quit(1);
+                yield break;
+            }
+
+            _app.ToggleResearchPanel();
+            yield return new WaitForEndOfFrame();
+            string researchScreenshot = Path.Combine(_outputDirectory, "research.png");
+            ScreenCapture.CaptureScreenshot(researchScreenshot);
+            yield return WaitForFile(researchScreenshot, 8f);
+            _app.HideResearchPanel();
+
             _app.KeyboardInput.SetSpeed(18f);
 
             float testEndsAt = Time.realtimeSinceStartup + 10f;
@@ -59,8 +75,10 @@ namespace VirtualRide.Core
             ScreenCapture.CaptureScreenshot(rideScreenshot);
             yield return WaitForFile(rideScreenshot, 8f);
 
-            bool passed = Validate(helpScreenshot, rideScreenshot, out string reason);
-            WriteResult(passed, reason, helpScreenshot, rideScreenshot);
+            _app.EndResearchSession("smoke_test_completed");
+
+            bool passed = Validate(helpScreenshot, researchScreenshot, rideScreenshot, out string reason);
+            WriteResult(passed, reason, helpScreenshot, researchScreenshot, rideScreenshot);
 
             if (passed)
             {
@@ -76,6 +94,7 @@ namespace VirtualRide.Core
 
         private bool Validate(
             string helpScreenshot,
+            string researchScreenshot,
             string rideScreenshot,
             out string reason)
         {
@@ -110,13 +129,22 @@ namespace VirtualRide.Core
                 return false;
             }
 
-            if (!IsUsefulScreenshot(helpScreenshot) || !IsUsefulScreenshot(rideScreenshot))
+            if (!IsUsefulScreenshot(helpScreenshot) ||
+                !IsUsefulScreenshot(researchScreenshot) ||
+                !IsUsefulScreenshot(rideScreenshot))
             {
                 reason = "One or more verification screenshots were not written.";
                 return false;
             }
 
-            reason = "Runtime, generated world, UI states, speed mapping, and distance progression passed.";
+            if (!IsUsefulResearchFile(_app.ResearchRecorder.CsvPath, 6) ||
+                !IsUsefulResearchFile(_app.ResearchRecorder.SummaryPath, 1))
+            {
+                reason = "Research CSV or summary JSON was not written with enough samples.";
+                return false;
+            }
+
+            reason = "Runtime, generated world, UI states, speed mapping, distance progression, and research logging passed.";
             return true;
         }
 
@@ -124,6 +152,7 @@ namespace VirtualRide.Core
             bool passed,
             string reason,
             string helpScreenshot,
+            string researchScreenshot,
             string rideScreenshot)
         {
             int rendererCount = FindObjectsByType<Renderer>().Length;
@@ -136,7 +165,11 @@ namespace VirtualRide.Core
                 $"  \"routeDistanceMetres\": {_app.RouteDistance.ToString("0.00", CultureInfo.InvariantCulture)},\n" +
                 $"  \"routeLengthMetres\": {_app.Route.TotalLength.ToString("0.00", CultureInfo.InvariantCulture)},\n" +
                 $"  \"rendererCount\": {rendererCount},\n" +
+                $"  \"researchCsv\": \"{EscapeJson(_app.ResearchRecorder.CsvPath)}\",\n" +
+                $"  \"researchSummary\": \"{EscapeJson(_app.ResearchRecorder.SummaryPath)}\",\n" +
+                $"  \"researchSamples\": {_app.ResearchRecorder.SampleCount},\n" +
                 $"  \"helpScreenshot\": \"{EscapeJson(helpScreenshot)}\",\n" +
+                $"  \"researchScreenshot\": \"{EscapeJson(researchScreenshot)}\",\n" +
                 $"  \"rideScreenshot\": \"{EscapeJson(rideScreenshot)}\"\n" +
                 "}\n";
             File.WriteAllText(Path.Combine(_outputDirectory, "result.json"), json);
@@ -161,6 +194,32 @@ namespace VirtualRide.Core
             try
             {
                 return File.Exists(path) && new FileInfo(path).Length > 4096;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+
+        private static bool IsUsefulResearchFile(string path, int minimumLines)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                {
+                    return false;
+                }
+
+                int lines = 0;
+                using (StreamReader reader = File.OpenText(path))
+                {
+                    while (reader.ReadLine() != null)
+                    {
+                        lines++;
+                    }
+                }
+
+                return lines >= minimumLines;
             }
             catch (IOException)
             {

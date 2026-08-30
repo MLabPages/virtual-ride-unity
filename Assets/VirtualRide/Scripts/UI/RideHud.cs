@@ -15,13 +15,17 @@ namespace VirtualRide.UI
         private GUIStyle _smallStyle;
         private GUIStyle _buttonStyle;
         private GUIStyle _primaryButtonStyle;
+        private GUIStyle _dangerButtonStyle;
         private GUIStyle _statusStyle;
+        private GUIStyle _textFieldStyle;
         private Texture2D _whiteTexture;
         private Texture2D _roundedTexture;
         private Texture2D _primaryTexture;
         private Texture2D _secondaryTexture;
         private Texture2D _dangerTexture;
         private bool _stylesReady;
+        private string _participantId = "P001";
+        private string _condition = "baseline";
 
         private void Awake()
         {
@@ -44,6 +48,7 @@ namespace VirtualRide.UI
 
             DrawTopHud(width);
             DrawRouteProgress(width);
+            DrawResearchBadge(width);
             DrawStatus(width, height);
             DrawControls(width, height);
 
@@ -60,6 +65,11 @@ namespace VirtualRide.UI
             if (_app.HelpVisible)
             {
                 DrawHelp(width, height);
+            }
+
+            if (_app.ResearchPanelVisible)
+            {
+                DrawResearchPanel(width, height);
             }
 
             GUI.matrix = previousMatrix;
@@ -116,7 +126,7 @@ namespace VirtualRide.UI
 
         private void DrawControls(float width, float height)
         {
-            float panelWidth = Mathf.Min(920f, width - 56f);
+            float panelWidth = Mathf.Min(1050f, width - 56f);
             Rect panel = new Rect((width - panelWidth) * 0.5f, height - 79f, panelWidth, 58f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.91f));
 
@@ -170,6 +180,29 @@ namespace VirtualRide.UI
             {
                 _app.ToggleWind();
             }
+
+            x += 54f;
+            if (GUI.Button(new Rect(x, y, 126f, 38f),
+                _app.ResearchRecorder.IsRecording ? "● 記録中" : "実験記録",
+                _app.ResearchRecorder.IsRecording ? _dangerButtonStyle : _buttonStyle))
+            {
+                _app.ToggleResearchPanel();
+            }
+        }
+
+        private void DrawResearchBadge(float width)
+        {
+            ResearchSessionRecorder recorder = _app.ResearchRecorder;
+            if (!recorder.IsRecording)
+            {
+                return;
+            }
+
+            Rect badge = new Rect(width * 0.5f - 160f, 24f, 320f, 40f);
+            DrawPanel(badge, new Color(0.78f, 0.16f, 0.13f, 0.94f));
+            GUI.Label(badge,
+                $"● 実験記録中  {FormatTime(recorder.RecordingElapsedSeconds)}  {recorder.ParticipantId}",
+                _statusStyle);
         }
 
         private void DrawCameraPanel(float width, float height)
@@ -283,6 +316,78 @@ namespace VirtualRide.UI
             }
         }
 
+        private void DrawResearchPanel(float width, float height)
+        {
+            GUI.DrawTexture(new Rect(0f, 0f, width, height), _whiteTexture, ScaleMode.StretchToFill,
+                true, 0f, new Color(0.01f, 0.025f, 0.03f, 0.78f), 0f, 0f);
+
+            ResearchSessionRecorder recorder = _app.ResearchRecorder;
+            float cardWidth = Mathf.Min(720f, width - 80f);
+            float cardHeight = Mathf.Min(540f, height - 70f);
+            Rect card = new Rect((width - cardWidth) * 0.5f, (height - cardHeight) * 0.5f, cardWidth, cardHeight);
+            DrawPanel(card, new Color(0.035f, 0.075f, 0.08f, 0.98f));
+
+            GUI.Label(new Rect(card.x + 38f, card.y + 28f, card.width - 76f, 42f),
+                "実験セッション記録", _headingStyle);
+            GUI.Label(new Rect(card.x + 38f, card.y + 73f, card.width - 76f, 48f),
+                "速度・回転数・信頼度・距離などを10HzでCSVへ保存します。\nカメラ映像は記録しません。",
+                _bodyStyle);
+
+            if (!recorder.IsRecording)
+            {
+                GUI.Label(new Rect(card.x + 38f, card.y + 139f, 220f, 28f), "匿名の参加者ID", _bodyStyle);
+                _participantId = GUI.TextField(
+                    new Rect(card.x + 270f, card.y + 134f, card.width - 308f, 38f),
+                    _participantId, 40, _textFieldStyle);
+
+                GUI.Label(new Rect(card.x + 38f, card.y + 193f, 220f, 28f), "実験条件", _bodyStyle);
+                _condition = GUI.TextField(
+                    new Rect(card.x + 270f, card.y + 188f, card.width - 308f, 38f),
+                    _condition, 40, _textFieldStyle);
+
+                GUI.Label(new Rect(card.x + 38f, card.y + 239f, card.width - 76f, 44f),
+                    "氏名・メールアドレスは入力せず、P001のような匿名IDを使ってください。\n記録開始時に距離・時間を0へ戻します。",
+                    _smallStyle);
+            }
+            else
+            {
+                GUI.Label(new Rect(card.x + 38f, card.y + 139f, card.width - 76f, 34f),
+                    $"参加者ID: {recorder.ParticipantId}", _bodyStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 181f, card.width - 76f, 34f),
+                    $"条件: {recorder.Condition}", _bodyStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 223f, card.width - 76f, 34f),
+                    $"経過: {FormatTime(recorder.RecordingElapsedSeconds)}  ・  {recorder.SampleCount} 件",
+                    _bodyStyle);
+            }
+
+            Rect status = new Rect(card.x + 38f, card.y + cardHeight - 206f, card.width - 76f, 54f);
+            DrawPanel(status, recorder.IsRecording
+                ? new Color(0.52f, 0.12f, 0.10f, 0.92f)
+                : new Color(0.06f, 0.16f, 0.18f, 0.92f));
+            GUI.Label(status, recorder.LastMessage, _statusStyle);
+
+            GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 139f, card.width - 76f, 46f),
+                "保存先: " + recorder.DataDirectory, _smallStyle);
+
+            float buttonY = card.y + cardHeight - 76f;
+            if (!recorder.IsRecording)
+            {
+                if (GUI.Button(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を開始", _primaryButtonStyle))
+                {
+                    _app.BeginResearchSession(_participantId, _condition);
+                }
+            }
+            else if (GUI.Button(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を終了して保存", _dangerButtonStyle))
+            {
+                _app.EndResearchSession();
+            }
+
+            if (GUI.Button(new Rect(card.xMax - 158f, buttonY, 120f, 46f), "閉じる", _buttonStyle))
+            {
+                _app.HideResearchPanel();
+            }
+        }
+
         private void EnsureStyles()
         {
             if (_stylesReady)
@@ -311,6 +416,14 @@ namespace VirtualRide.UI
 
             _buttonStyle = MakeButtonStyle(_roundedTexture, new Color(0.96f, 1f, 0.99f));
             _primaryButtonStyle = MakeButtonStyle(_primaryTexture, Color.white);
+            _dangerButtonStyle = MakeButtonStyle(_dangerTexture, Color.white);
+            _textFieldStyle = new GUIStyle(GUI.skin.textField)
+            {
+                font = _font,
+                fontSize = 18,
+                alignment = TextAnchor.MiddleLeft,
+                padding = new RectOffset(12, 12, 7, 7)
+            };
             _stylesReady = true;
         }
 
