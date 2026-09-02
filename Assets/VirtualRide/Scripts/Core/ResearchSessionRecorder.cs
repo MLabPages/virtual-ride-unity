@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -12,15 +13,38 @@ namespace VirtualRide.Core
     /// </summary>
     public sealed class ResearchSessionRecorder
     {
+        public const string SchemaVersion = "2";
+        public const string MarkerInstruction = "instruction";
+        public const string MarkerRest = "rest";
+        public const string MarkerNote = "note";
+        public const string StopReasonCompleted = "completed";
+        public const string StopReasonTrialDurationElapsed = "trial_duration_elapsed";
+        public const string StopReasonApplicationClosed = "application_closed";
+
         private const float SampleIntervalSeconds = 0.1f;
-        private const string SchemaVersion = "1";
+        private const float MaximumTrialDurationSeconds = 6f * 60f * 60f;
+        private const int MaximumNoteLength = 200;
+
+        private readonly List<ResearchEventMarker> _events = new List<ResearchEventMarker>();
+        private readonly List<string> _pendingSampleMarkers = new List<string>();
 
         private StreamWriter _writer;
+        private StreamWriter _eventsWriter;
         private DateTimeOffset _startedAt;
         private float _recordingElapsed;
         private float _nextSampleAt;
         private int _sampleCount;
         private string _dataDirectory;
+        private float _trialDurationSeconds;
+        private string _startingInputMode = string.Empty;
+        private string _applicationVersion = string.Empty;
+        private string _unityVersion = string.Empty;
+        private string _productName = string.Empty;
+        private string _companyName = string.Empty;
+        private string _platform = string.Empty;
+        private bool _cameraBothLegsVisible = true;
+        private string _cameraSensitivity = string.Empty;
+        private float _cameraMetersPerRevolution;
 
         public ResearchSessionRecorder(string dataDirectory = null)
         {
@@ -35,11 +59,21 @@ namespace VirtualRide.Core
         public string Condition { get; private set; } = string.Empty;
         public string SessionId { get; private set; } = string.Empty;
         public string CsvPath { get; private set; } = string.Empty;
+        public string EventsPath { get; private set; } = string.Empty;
         public string SummaryPath { get; private set; } = string.Empty;
         public string DataDirectory => _dataDirectory;
         public string LastMessage { get; private set; }
+        public string StopReason { get; private set; } = string.Empty;
+        public string StartingInputMode => _startingInputMode;
         public float RecordingElapsedSeconds => _recordingElapsed;
+        public float TrialDurationSeconds => _trialDurationSeconds;
+        public bool HasTrialDuration => _trialDurationSeconds > 0f;
+        public float RemainingTrialSeconds => HasTrialDuration
+            ? Mathf.Max(0f, _trialDurationSeconds - _recordingElapsed)
+            : 0f;
         public int SampleCount => _sampleCount;
+        public int EventCount => _events.Count;
+        public IReadOnlyList<ResearchEventMarker> Events => _events;
 
         public void SetDataDirectoryForTesting(string dataDirectory)
         {
@@ -51,7 +85,7 @@ namespace VirtualRide.Core
             _dataDirectory = Path.GetFullPath(dataDirectory);
         }
 
-        public bool Start(string participantId, string condition, VirtualRideApp app)
+        public bool Start(string participantId, string condition, VirtualRideApp app, float trialDurationSeconds = 0f)
         {
             if (IsRecording)
             {
@@ -62,6 +96,12 @@ namespace VirtualRide.Core
             if (app == null)
             {
                 LastMessage = "走行アプリを確認できません";
+                return false;
+            }
+
+            if (trialDurationSeconds < 0f || trialDurationSeconds > MaximumTrialDurationSeconds)
+            {
+                LastMessage = "試行時間は0（手動終了）から6時間までです";
                 return false;
             }
 
@@ -81,25 +121,45 @@ namespace VirtualRide.Core
 
             try
             {
-                Directory.CreateDirectory(_dataDirectory);
+                if (!EnsureDataDirectory())
+                {
+                    LastMessage = "記録フォルダを作成できません";
+                    return false;
+                }
+
+                CaptureStartMetadata(app);
+                _trialDurationSeconds = trialDurationSeconds;
                 _startedAt = DateTimeOffset.Now;
                 SessionId = _startedAt.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) +
                             "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
                 string fileStem = ParticipantId + "_" + Condition + "_" + SessionId;
                 CsvPath = Path.Combine(_dataDirectory, fileStem + ".csv");
+                EventsPath = Path.Combine(_dataDirectory, fileStem + "_events.csv");
                 SummaryPath = Path.Combine(_dataDirectory, fileStem + "_summary.json");
+                _events.Clear();
+                _pendingSampleMarkers.Clear();
+                StopReason = string.Empty;
+
                 _writer = new StreamWriter(CsvPath, false, new UTF8Encoding(false));
                 _writer.WriteLine(
                     "schema_version,session_id,participant_id,condition,recorded_at_utc,elapsed_seconds," +
                     "input_mode,input_state,input_status,input_speed_kph,display_speed_kph,cadence_rpm," +
                     "confidence,distance_metres,moving_seconds,route_distance_metres,route_progress," +
-                    "area_name,is_paused");
+                    "area_name,is_paused,event_marker");
+                _eventsWriter = new StreamWriter(EventsPath, false, new UTF8Encoding(false));
+                _eventsWriter.WriteLine(
+                    "schema_version,session_id,participant_id,condition,recorded_at_utc,elapsed_seconds," +
+                    "marker_type,note");
+                _eventsWriter.Flush();
                 _recordingElapsed = 0f;
                 _nextSampleAt = 0f;
                 _sampleCount = 0;
                 WriteSample(app);
                 _nextSampleAt = SampleIntervalSeconds;
-                LastMessage = "実験記録中: " + ParticipantId + " / " + Condition;
+                LastMessage = HasTrialDuration
+                    ? "実験記録中: " + ParticipantId + " / " + Condition + "  （" +
+                      Mathf.RoundToInt(_trialDurationSeconds) + "秒で自動保存）"
+                    : "実験記録中: " + ParticipantId + " / " + Condition;
                 return true;
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
@@ -118,32 +178,37 @@ namespace VirtualRide.Core
             }
 
             _recordingElapsed += unscaledDeltaTime;
-            if (_recordingElapsed + 0.0001f < _nextSampleAt)
+            if (_recordingElapsed + 0.0001f >= _nextSampleAt)
             {
-                return;
+                try
+                {
+                    WriteSample(app);
+                    _nextSampleAt += SampleIntervalSeconds;
+                    if (_nextSampleAt < _recordingElapsed - SampleIntervalSeconds)
+                    {
+                        _nextSampleAt = _recordingElapsed + SampleIntervalSeconds;
+                    }
+
+                    if (_sampleCount % 10 == 0)
+                    {
+                        _writer.Flush();
+                    }
+                }
+                catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+                {
+                    CloseWriter();
+                    LastMessage = "記録を継続できません: " + exception.Message;
+                    return;
+                }
             }
 
-            try
+            if (HasTrialDuration && _recordingElapsed + 0.0001f >= _trialDurationSeconds)
             {
-                WriteSample(app);
-                _nextSampleAt += SampleIntervalSeconds;
-                if (_nextSampleAt < _recordingElapsed - SampleIntervalSeconds)
-                {
-                    _nextSampleAt = _recordingElapsed + SampleIntervalSeconds;
-                }
-                if (_sampleCount % 10 == 0)
-                {
-                    _writer.Flush();
-                }
-            }
-            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
-            {
-                CloseWriter();
-                LastMessage = "記録を継続できません: " + exception.Message;
+                Stop(app, StopReasonTrialDurationElapsed);
             }
         }
 
-        public bool Stop(VirtualRideApp app, string reason = "completed")
+        public bool Stop(VirtualRideApp app, string reason = StopReasonCompleted)
         {
             if (!IsRecording)
             {
@@ -158,9 +223,13 @@ namespace VirtualRide.Core
                 }
 
                 _writer.Flush();
+                _eventsWriter?.Flush();
                 CloseWriter();
-                WriteSummary(app, reason);
-                LastMessage = "記録を保存しました: " + Path.GetFileName(CsvPath);
+                StopReason = string.IsNullOrEmpty(reason) ? StopReasonCompleted : reason;
+                WriteSummary(app, StopReason);
+                LastMessage = StopReason == StopReasonTrialDurationElapsed
+                    ? "制限時間に達したため記録を保存しました: " + Path.GetFileName(CsvPath)
+                    : "記録を保存しました: " + Path.GetFileName(CsvPath);
                 return true;
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
@@ -171,10 +240,94 @@ namespace VirtualRide.Core
             }
         }
 
+        public bool AddEventMarker(string markerType, string note = "")
+        {
+            if (!IsRecording)
+            {
+                LastMessage = "記録中のみイベントを追加できます";
+                return false;
+            }
+
+            string type = SanitizeIdentifier(markerType);
+            if (string.IsNullOrEmpty(type))
+            {
+                LastMessage = "イベントの種類を指定してください";
+                return false;
+            }
+
+            string safeNote = SanitizeNote(note);
+            string recordedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            var marker = new ResearchEventMarker(
+                _recordingElapsed,
+                recordedAtUtc,
+                type,
+                safeNote);
+
+            try
+            {
+                _eventsWriter.WriteLine(string.Join(",", new[]
+                {
+                    SchemaVersion,
+                    Csv(SessionId),
+                    Csv(ParticipantId),
+                    Csv(Condition),
+                    recordedAtUtc,
+                    Number(_recordingElapsed),
+                    Csv(type),
+                    Csv(safeNote)
+                }));
+                _eventsWriter.Flush();
+                _events.Add(marker);
+                _pendingSampleMarkers.Add(type);
+                LastMessage = string.IsNullOrEmpty(safeNote)
+                    ? "イベントを記録: " + type + "  (" + Number(_recordingElapsed) + "秒)"
+                    : "イベントを記録: " + type + " / " + safeNote;
+                return true;
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                CloseWriter();
+                LastMessage = "イベントを保存できません: " + exception.Message;
+                return false;
+            }
+        }
+
+        private void CaptureStartMetadata(VirtualRideApp app)
+        {
+            _startingInputMode = app.InputModeName ?? string.Empty;
+            _applicationVersion = string.IsNullOrWhiteSpace(Application.version)
+                ? "unspecified"
+                : Application.version;
+            _unityVersion = string.IsNullOrWhiteSpace(Application.unityVersion)
+                ? "unspecified"
+                : Application.unityVersion;
+            _productName = Application.productName ?? string.Empty;
+            _companyName = Application.companyName ?? string.Empty;
+            _platform = Application.platform.ToString();
+
+            CameraCadenceInput camera = app.CameraInput;
+            if (camera != null)
+            {
+                _cameraBothLegsVisible = camera.BothLegsVisible;
+                _cameraSensitivity = camera.Sensitivity.ToString();
+                _cameraMetersPerRevolution = camera.MetersPerRevolution;
+            }
+            else
+            {
+                _cameraBothLegsVisible = true;
+                _cameraSensitivity = string.Empty;
+                _cameraMetersPerRevolution = 0f;
+            }
+        }
+
         private void WriteSample(VirtualRideApp app)
         {
             RideInputSample sample = app.ActiveSample;
             string recordedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            string eventMarker = _pendingSampleMarkers.Count > 0
+                ? string.Join("|", _pendingSampleMarkers.ToArray())
+                : string.Empty;
+            _pendingSampleMarkers.Clear();
             _writer.WriteLine(string.Join(",", new[]
             {
                 SchemaVersion,
@@ -195,7 +348,8 @@ namespace VirtualRide.Core
                 Number(app.RouteDistance),
                 Number(app.RouteProgress),
                 Csv(app.AreaName),
-                app.IsPaused ? "true" : "false"
+                app.IsPaused ? "true" : "false",
+                Csv(eventMarker)
             }));
             _sampleCount++;
         }
@@ -206,7 +360,7 @@ namespace VirtualRide.Core
             float movingSeconds = app != null ? app.Session.MovingSeconds : 0f;
             float averageSpeed = app != null ? app.Session.AverageSpeedKph : 0f;
             float maximumSpeed = app != null ? app.Session.MaximumSpeedKph : 0f;
-            string inputMode = app != null ? app.InputModeName : string.Empty;
+            string finalInputMode = app != null ? app.InputModeName : string.Empty;
             string json =
                 "{\n" +
                 "  \"schemaVersion\": \"" + SchemaVersion + "\",\n" +
@@ -219,29 +373,116 @@ namespace VirtualRide.Core
                 "  \"sampleIntervalSeconds\": " + Number(SampleIntervalSeconds) + ",\n" +
                 "  \"sampleCount\": " + _sampleCount.ToString(CultureInfo.InvariantCulture) + ",\n" +
                 "  \"elapsedSeconds\": " + Number(_recordingElapsed) + ",\n" +
+                "  \"trialDurationSeconds\": " + TrialDurationJson() + ",\n" +
                 "  \"movingSeconds\": " + Number(movingSeconds) + ",\n" +
                 "  \"distanceMetres\": " + Number(distance) + ",\n" +
                 "  \"averageSpeedKph\": " + Number(averageSpeed) + ",\n" +
                 "  \"maximumSpeedKph\": " + Number(maximumSpeed) + ",\n" +
-                "  \"finalInputMode\": \"" + Json(inputMode) + "\",\n" +
+                "  \"startingInputMode\": \"" + Json(_startingInputMode) + "\",\n" +
+                "  \"finalInputMode\": \"" + Json(finalInputMode) + "\",\n" +
+                "  \"inputLocked\": true,\n" +
+                "  \"applicationVersion\": \"" + Json(_applicationVersion) + "\",\n" +
+                "  \"unityVersion\": \"" + Json(_unityVersion) + "\",\n" +
+                "  \"productName\": \"" + Json(_productName) + "\",\n" +
+                "  \"companyName\": \"" + Json(_companyName) + "\",\n" +
+                "  \"platform\": \"" + Json(_platform) + "\",\n" +
+                "  \"camera\": {\n" +
+                "    \"bothLegsVisible\": " + (_cameraBothLegsVisible ? "true" : "false") + ",\n" +
+                "    \"sensitivity\": \"" + Json(_cameraSensitivity) + "\",\n" +
+                "    \"metersPerRevolution\": " + Number(_cameraMetersPerRevolution) + "\n" +
+                "  },\n" +
+                "  \"measurementValidated\": false,\n" +
+                "  \"cameraFramesSaved\": false,\n" +
                 "  \"csvFile\": \"" + Json(Path.GetFileName(CsvPath)) + "\",\n" +
-                "  \"cameraFramesSaved\": false\n" +
+                "  \"eventsFile\": \"" + Json(Path.GetFileName(EventsPath)) + "\",\n" +
+                "  \"eventCount\": " + _events.Count.ToString(CultureInfo.InvariantCulture) + ",\n" +
+                "  \"events\": " + WriteEventsJson() + "\n" +
                 "}\n";
             File.WriteAllText(SummaryPath, json, new UTF8Encoding(false));
+        }
+
+        private string TrialDurationJson()
+        {
+            return HasTrialDuration ? Number(_trialDurationSeconds) : "null";
+        }
+
+        private string WriteEventsJson()
+        {
+            if (_events.Count == 0)
+            {
+                return "[]";
+            }
+
+            var builder = new StringBuilder();
+            builder.Append("[\n");
+            for (int i = 0; i < _events.Count; i++)
+            {
+                ResearchEventMarker marker = _events[i];
+                builder.Append("    {\n");
+                builder.Append("      \"elapsedSeconds\": " + Number(marker.ElapsedSeconds) + ",\n");
+                builder.Append("      \"recordedAtUtc\": \"" + Json(marker.RecordedAtUtc) + "\",\n");
+                builder.Append("      \"markerType\": \"" + Json(marker.MarkerType) + "\",\n");
+                builder.Append("      \"note\": \"" + Json(marker.Note) + "\"\n");
+                builder.Append(i == _events.Count - 1 ? "    }\n" : "    },\n");
+            }
+
+            builder.Append("  ]");
+            return builder.ToString();
         }
 
         private void CloseWriter()
         {
             _writer?.Dispose();
             _writer = null;
+            _eventsWriter?.Dispose();
+            _eventsWriter = null;
         }
 
-        private static string ResolveDefaultDataDirectory()
+        private bool EnsureDataDirectory()
+        {
+            if (TryCreateDirectory(_dataDirectory))
+            {
+                return true;
+            }
+
+            string fallback = Path.Combine(Application.persistentDataPath, "VirtualRideResearchData");
+            if (!string.Equals(Path.GetFullPath(_dataDirectory), Path.GetFullPath(fallback), StringComparison.OrdinalIgnoreCase)
+                && TryCreateDirectory(fallback))
+            {
+                _dataDirectory = fallback;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryCreateDirectory(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return false;
+                }
+
+                Directory.CreateDirectory(path);
+                return Directory.Exists(path);
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        internal static string ResolveDefaultDataDirectory()
         {
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            return string.IsNullOrWhiteSpace(documents)
-                ? Path.Combine(Application.persistentDataPath, "ResearchData")
-                : Path.Combine(documents, "VirtualRideResearchData");
+            if (!string.IsNullOrWhiteSpace(documents))
+            {
+                return Path.Combine(documents, "VirtualRideResearchData");
+            }
+
+            return Path.Combine(Application.persistentDataPath, "VirtualRideResearchData");
         }
 
         private static string SanitizeIdentifier(string value)
@@ -268,6 +509,19 @@ namespace VirtualRide.Core
             return builder.ToString();
         }
 
+        private static string SanitizeNote(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            string flattened = value.Trim().Replace('\r', ' ').Replace('\n', ' ');
+            return flattened.Length <= MaximumNoteLength
+                ? flattened
+                : flattened.Substring(0, MaximumNoteLength);
+        }
+
         private static string Number(float value)
         {
             return value.ToString("0.####", CultureInfo.InvariantCulture);
@@ -287,5 +541,21 @@ namespace VirtualRide.Core
                 .Replace("\r", "\\r")
                 .Replace("\n", "\\n");
         }
+    }
+
+    public sealed class ResearchEventMarker
+    {
+        public ResearchEventMarker(float elapsedSeconds, string recordedAtUtc, string markerType, string note)
+        {
+            ElapsedSeconds = elapsedSeconds;
+            RecordedAtUtc = recordedAtUtc ?? string.Empty;
+            MarkerType = markerType ?? string.Empty;
+            Note = note ?? string.Empty;
+        }
+
+        public float ElapsedSeconds { get; }
+        public string RecordedAtUtc { get; }
+        public string MarkerType { get; }
+        public string Note { get; }
     }
 }

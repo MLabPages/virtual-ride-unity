@@ -43,6 +43,13 @@ namespace VirtualRide.Input
         bool IsActive { get; }
         RideInputSample Current { get; }
 
+        /// <summary>
+        /// True when speed/cadence values are estimates that have not been
+        /// validated against a reference sensor. Keyboard simulation is not a
+        /// measurement, so it returns false.
+        /// </summary>
+        bool IsUnvalidatedMeasurement { get; }
+
         void Activate();
         void Deactivate();
         void Tick(float unscaledDeltaTime);

@@ -12,6 +12,7 @@
 - `CadenceRpm`: ペダル回転数（rpm）
 - `Confidence`: 0〜1の計測信頼度
 - `Status`: 参加者や実験者へ見せる状態文
+- `IsUnvalidatedMeasurement`: 基準センサーとの妥当性確認前なら true（カメラ推定は true、キーボードは false）
 
 センサー固有の通信処理や値の変換は、この境界より入力側に閉じ込めます。
 
@@ -20,7 +21,7 @@
 1. 購入するセンサーと、PCで値を受け取る方法を決めます。
 2. `IRideInputSource` を実装するクラスを追加します。
 3. センサーの受信値から速度と回転数を作り、`Current` で返します。
-4. 起動後に `VirtualRideApp.AttachExternalInput(source)` を呼びます。
+4. 起動後、実験記録を始める前に `VirtualRideApp.AttachExternalInput(source)` を呼びます。記録中は入力方式を変更できません。
 5. カメラ、センサー、キーボードで同じ速度を与え、仮想空間内の移動が一致するか確認します。
 
 ## 購入前に確認すること

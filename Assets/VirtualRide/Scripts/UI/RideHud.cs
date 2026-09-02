@@ -1,3 +1,4 @@
+using System.Globalization;
 using UnityEngine;
 using VirtualRide.Core;
 using VirtualRide.Input;
@@ -13,6 +14,7 @@ namespace VirtualRide.UI
         private GUIStyle _headingStyle;
         private GUIStyle _bodyStyle;
         private GUIStyle _smallStyle;
+        private GUIStyle _warningStyle;
         private GUIStyle _buttonStyle;
         private GUIStyle _primaryButtonStyle;
         private GUIStyle _dangerButtonStyle;
@@ -26,6 +28,9 @@ namespace VirtualRide.UI
         private bool _stylesReady;
         private string _participantId = "P001";
         private string _condition = "baseline";
+        private string _trialDurationText = "";
+        private string _eventNote = "";
+        private string _formMessage = "";
 
         private void Awake()
         {
@@ -49,6 +54,7 @@ namespace VirtualRide.UI
             DrawTopHud(width);
             DrawRouteProgress(width);
             DrawResearchBadge(width);
+            DrawBlockedActionBanner(width);
             DrawStatus(width, height);
             DrawControls(width, height);
 
@@ -77,7 +83,8 @@ namespace VirtualRide.UI
 
         private void DrawTopHud(float width)
         {
-            Rect panel = new Rect(28f, 24f, 460f, 151f);
+            bool unvalidated = _app.ActiveInputIsUnvalidatedMeasurement;
+            Rect panel = new Rect(28f, 24f, 460f, unvalidated ? 176f : 151f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.88f));
 
             GUI.Label(new Rect(50f, 36f, 280f, 75f), _app.DisplaySpeedKph.ToString("0.0"), _speedStyle);
@@ -85,12 +92,22 @@ namespace VirtualRide.UI
 
             RideInputSample sample = _app.ActiveSample;
             string cadence = sample.HasCadence ? Mathf.RoundToInt(sample.CadenceRpm) + " rpm" : "-- rpm";
+            if (unvalidated)
+            {
+                cadence = "推定 " + cadence;
+            }
+
             string rideTime = FormatTime(_app.Session.MovingSeconds);
             string distance = (_app.Session.DistanceMetres / 1000f).ToString("0.00") + " km";
             GUI.Label(new Rect(52f, 109f, 410f, 28f), $"{cadence}    {distance}    {rideTime}", _bodyStyle);
             GUI.Label(new Rect(52f, 139f, 410f, 25f),
                 $"平均 {_app.Session.AverageSpeedKph:0.0}  ・  最高 {_app.Session.MaximumSpeedKph:0.0} km/h",
                 _smallStyle);
+
+            if (unvalidated)
+            {
+                GUI.Label(new Rect(52f, 164f, 410f, 24f), "カメラ値は未検証の推定です", _warningStyle);
+            }
         }
 
         private void DrawRouteProgress(float width)
@@ -105,8 +122,19 @@ namespace VirtualRide.UI
             GUI.DrawTexture(track, _secondaryTexture, ScaleMode.StretchToFill);
             GUI.DrawTexture(new Rect(track.x, track.y, track.width * _app.RouteProgress, track.height),
                 _primaryTexture, ScaleMode.StretchToFill);
-            GUI.Label(new Rect(panel.x + 22f, panel.y + 77f, panel.width - 44f, 25f),
-                $"周回 {_app.Route.TotalLength / 1000f:0.00} km  ・  入力: {_app.InputModeName}", _smallStyle);
+
+            string inputLine = $"周回 {_app.Route.TotalLength / 1000f:0.00} km  ・  入力: {_app.InputModeName}";
+            if (_app.IsInputLocked)
+            {
+                inputLine += "（固定）";
+            }
+
+            if (_app.ActiveInputIsUnvalidatedMeasurement)
+            {
+                inputLine += "  ※未検証";
+            }
+
+            GUI.Label(new Rect(panel.x + 22f, panel.y + 77f, panel.width - 44f, 25f), inputLine, _smallStyle);
         }
 
         private void DrawStatus(float width, float height)
@@ -198,20 +226,38 @@ namespace VirtualRide.UI
                 return;
             }
 
-            Rect badge = new Rect(width * 0.5f - 160f, 24f, 320f, 40f);
+            Rect badge = new Rect(width * 0.5f - 210f, 24f, 420f, 40f);
             DrawPanel(badge, new Color(0.78f, 0.16f, 0.13f, 0.94f));
-            GUI.Label(badge,
-                $"● 実験記録中  {FormatTime(recorder.RecordingElapsedSeconds)}  {recorder.ParticipantId}",
-                _statusStyle);
+            string label = $"● 実験記録中  {FormatTime(recorder.RecordingElapsedSeconds)}";
+            if (recorder.HasTrialDuration)
+            {
+                label += "  残り " + FormatTime(recorder.RemainingTrialSeconds);
+            }
+
+            label += "  " + recorder.ParticipantId;
+            GUI.Label(badge, label, _statusStyle);
+        }
+
+        private void DrawBlockedActionBanner(float width)
+        {
+            if (!_app.IsBlockedActionMessageVisible)
+            {
+                return;
+            }
+
+            float y = _app.ResearchRecorder.IsRecording ? 72f : 24f;
+            Rect banner = new Rect(width * 0.5f - 300f, y, 600f, 44f);
+            DrawPanel(banner, new Color(0.82f, 0.45f, 0.10f, 0.95f));
+            GUI.Label(banner, _app.BlockedActionMessage, _statusStyle);
         }
 
         private void DrawCameraPanel(float width, float height)
         {
-            Rect panel = new Rect(28f, 194f, 318f, 322f);
+            Rect panel = new Rect(28f, 210f, 318f, 348f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.91f));
             GUI.Label(new Rect(panel.x + 18f, panel.y + 13f, panel.width - 36f, 27f), "ペダル確認", _headingStyle);
 
-            Rect preview = new Rect(panel.x + 18f, panel.y + 48f, panel.width - 36f, 178f);
+            Rect preview = new Rect(panel.x + 18f, panel.y + 48f, panel.width - 36f, 168f);
             CameraCadenceInput camera = _app.CameraInput;
             GUI.DrawTexture(preview, _secondaryTexture, ScaleMode.StretchToFill);
             if (camera.HasPreview)
@@ -237,25 +283,27 @@ namespace VirtualRide.UI
                 GUI.Label(preview, "カメラ準備中…", _statusStyle);
             }
 
-            Rect motionTrack = new Rect(panel.x + 18f, panel.y + 235f, panel.width - 36f, 8f);
+            Rect motionTrack = new Rect(panel.x + 18f, panel.y + 224f, panel.width - 36f, 8f);
             GUI.DrawTexture(motionTrack, _secondaryTexture, ScaleMode.StretchToFill);
             GUI.DrawTexture(new Rect(motionTrack.x, motionTrack.y, motionTrack.width * camera.MotionLevel, motionTrack.height),
                 _primaryTexture, ScaleMode.StretchToFill);
 
-            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 258f, 131f, 38f),
+            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 244f, 131f, 38f),
                 camera.BothLegsVisible ? "両足が映る" : "片足だけ映る", _buttonStyle))
             {
-                camera.ToggleLegView();
+                _app.TryToggleCameraLegView();
             }
 
-            if (GUI.Button(new Rect(panel.x + 158f, panel.y + 258f, 142f, 38f),
+            if (GUI.Button(new Rect(panel.x + 158f, panel.y + 244f, 142f, 38f),
                 "感度: " + camera.SensitivityLabel, _buttonStyle))
             {
-                camera.CycleSensitivity();
+                _app.TryCycleCameraSensitivity();
             }
 
-            GUI.Label(new Rect(panel.x + 18f, panel.y + 300f, panel.width - 36f, 20f),
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 288f, panel.width - 36f, 20f),
                 "映像は保存・送信しません", _smallStyle);
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 308f, panel.width - 36f, 28f),
+                "回転数・速度は未検証の推定値です", _warningStyle);
         }
 
         private void DrawPausedOverlay(float width, float height)
@@ -277,7 +325,7 @@ namespace VirtualRide.UI
                 true, 0f, new Color(0.01f, 0.025f, 0.03f, 0.78f), 0f, 0f);
 
             float cardWidth = Mathf.Min(760f, width - 80f);
-            float cardHeight = Mathf.Min(600f, height - 70f);
+            float cardHeight = Mathf.Min(640f, height - 70f);
             Rect card = new Rect((width - cardWidth) * 0.5f, (height - cardHeight) * 0.5f, cardWidth, cardHeight);
             DrawPanel(card, new Color(0.035f, 0.075f, 0.08f, 0.98f));
 
@@ -286,16 +334,17 @@ namespace VirtualRide.UI
             GUI.Label(new Rect(card.x + 38f, card.y + 80f, card.width - 76f, 52f),
                 "漕ぐ速さに合わせて、Unityで生成した田園コースを進みます。\nまずはキーボードで体験し、その後カメラ計測へ切り替えられます。", _bodyStyle);
 
-            GUI.Label(new Rect(card.x + 38f, card.y + 151f, card.width - 76f, 29f), "すぐ試す", _headingStyle);
-            GUI.Label(new Rect(card.x + 38f, card.y + 184f, card.width - 76f, 93f),
+            GUI.Label(new Rect(card.x + 38f, card.y + 146f, card.width - 76f, 29f), "すぐ試す", _headingStyle);
+            GUI.Label(new Rect(card.x + 38f, card.y + 176f, card.width - 76f, 72f),
                 "1. 「キーボードで試す」を押します\n2. ↑ または W で速度を上げます\n3. ↓ または S で速度を下げます（Spaceで停止／再開）", _bodyStyle);
 
-            GUI.Label(new Rect(card.x + 38f, card.y + 291f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
-            GUI.Label(new Rect(card.x + 38f, card.y + 324f, card.width - 76f, 112f),
+            GUI.Label(new Rect(card.x + 38f, card.y + 258f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
+            GUI.Label(new Rect(card.x + 38f, card.y + 288f, card.width - 76f, 96f),
                 "1. PCカメラにペダルと足元が横から映るよう固定します\n2. 「カメラ計測を始める」を押します\n3. 3〜5秒、一定のペースで漕ぎます\n4. 検出中と rpm が表示されたら、その速さで仮想空間を進みます", _bodyStyle);
 
-            GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 135f, card.width - 76f, 40f),
-                "カメラ映像はこのPC内だけで計算し、保存も送信もしません。", _smallStyle);
+            GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 168f, card.width - 76f, 58f),
+                "カメラの回転数・速度は未検証の推定値です。実験記録中は入力方式を切り替えられません。\nカメラ映像はこのPC内だけで計算し、保存も送信もしません。",
+                _smallStyle);
 
             float buttonY = card.y + cardHeight - 80f;
             if (GUI.Button(new Rect(card.x + 38f, buttonY, 218f, 48f), "キーボードで試す", _primaryButtonStyle))
@@ -322,59 +371,108 @@ namespace VirtualRide.UI
                 true, 0f, new Color(0.01f, 0.025f, 0.03f, 0.78f), 0f, 0f);
 
             ResearchSessionRecorder recorder = _app.ResearchRecorder;
-            float cardWidth = Mathf.Min(720f, width - 80f);
-            float cardHeight = Mathf.Min(540f, height - 70f);
+            float cardWidth = Mathf.Min(740f, width - 80f);
+            float cardHeight = Mathf.Min(recorder.IsRecording ? 620f : 600f, height - 50f);
             Rect card = new Rect((width - cardWidth) * 0.5f, (height - cardHeight) * 0.5f, cardWidth, cardHeight);
             DrawPanel(card, new Color(0.035f, 0.075f, 0.08f, 0.98f));
 
-            GUI.Label(new Rect(card.x + 38f, card.y + 28f, card.width - 76f, 42f),
+            GUI.Label(new Rect(card.x + 38f, card.y + 24f, card.width - 76f, 38f),
                 "実験セッション記録", _headingStyle);
-            GUI.Label(new Rect(card.x + 38f, card.y + 73f, card.width - 76f, 48f),
-                "速度・回転数・信頼度・距離などを10HzでCSVへ保存します。\nカメラ映像は記録しません。",
+            GUI.Label(new Rect(card.x + 38f, card.y + 64f, card.width - 76f, 44f),
+                "速度・回転数・信頼度・距離などを10HzでCSVへ保存します。\nカメラ映像は記録しません。記録中は入力方式が固定されます。",
                 _bodyStyle);
 
             if (!recorder.IsRecording)
             {
-                GUI.Label(new Rect(card.x + 38f, card.y + 139f, 220f, 28f), "匿名の参加者ID", _bodyStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 124f, 220f, 28f), "匿名の参加者ID", _bodyStyle);
                 _participantId = GUI.TextField(
-                    new Rect(card.x + 270f, card.y + 134f, card.width - 308f, 38f),
+                    new Rect(card.x + 270f, card.y + 118f, card.width - 308f, 38f),
                     _participantId, 40, _textFieldStyle);
 
-                GUI.Label(new Rect(card.x + 38f, card.y + 193f, 220f, 28f), "実験条件", _bodyStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 172f, 220f, 28f), "実験条件", _bodyStyle);
                 _condition = GUI.TextField(
-                    new Rect(card.x + 270f, card.y + 188f, card.width - 308f, 38f),
+                    new Rect(card.x + 270f, card.y + 166f, card.width - 308f, 38f),
                     _condition, 40, _textFieldStyle);
 
-                GUI.Label(new Rect(card.x + 38f, card.y + 239f, card.width - 76f, 44f),
-                    "氏名・メールアドレスは入力せず、P001のような匿名IDを使ってください。\n記録開始時に距離・時間を0へ戻します。",
+                GUI.Label(new Rect(card.x + 38f, card.y + 220f, 220f, 28f), "試行時間（秒）", _bodyStyle);
+                _trialDurationText = GUI.TextField(
+                    new Rect(card.x + 270f, card.y + 214f, card.width - 308f, 38f),
+                    _trialDurationText, 8, _textFieldStyle);
+
+                GUI.Label(new Rect(card.x + 38f, card.y + 262f, card.width - 76f, 52f),
+                    "氏名は使わず、P001のような匿名IDにしてください。空欄または0秒は手動終了です。\n時間が来ると自動で保存します。開始時に距離・時間を0へ戻し、入力方式を固定します。",
                     _smallStyle);
             }
             else
             {
-                GUI.Label(new Rect(card.x + 38f, card.y + 139f, card.width - 76f, 34f),
-                    $"参加者ID: {recorder.ParticipantId}", _bodyStyle);
-                GUI.Label(new Rect(card.x + 38f, card.y + 181f, card.width - 76f, 34f),
-                    $"条件: {recorder.Condition}", _bodyStyle);
-                GUI.Label(new Rect(card.x + 38f, card.y + 223f, card.width - 76f, 34f),
-                    $"経過: {FormatTime(recorder.RecordingElapsedSeconds)}  ・  {recorder.SampleCount} 件",
+                string remaining = recorder.HasTrialDuration
+                    ? "  ・  残り " + FormatTime(recorder.RemainingTrialSeconds)
+                    : "  ・  手動終了";
+                GUI.Label(new Rect(card.x + 38f, card.y + 122f, card.width - 76f, 28f),
+                    $"参加者ID: {recorder.ParticipantId}    条件: {recorder.Condition}", _bodyStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 154f, card.width - 76f, 28f),
+                    $"経過: {FormatTime(recorder.RecordingElapsedSeconds)}{remaining}  ・  {recorder.SampleCount} 件",
                     _bodyStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 186f, card.width - 76f, 24f),
+                    "入力: " + recorder.StartingInputMode + "（記録中は変更できません）", _smallStyle);
+
+                GUI.Label(new Rect(card.x + 38f, card.y + 220f, card.width - 76f, 26f), "イベントマーカー", _headingStyle);
+                if (GUI.Button(new Rect(card.x + 38f, card.y + 252f, 150f, 40f), "指示 (F8)", _buttonStyle))
+                {
+                    _formMessage = "";
+                    _app.AddResearchEventMarker(ResearchSessionRecorder.MarkerInstruction);
+                }
+
+                if (GUI.Button(new Rect(card.x + 198f, card.y + 252f, 150f, 40f), "休息 (F9)", _buttonStyle))
+                {
+                    _formMessage = "";
+                    _app.AddResearchEventMarker(ResearchSessionRecorder.MarkerRest);
+                }
+
+                GUI.Label(new Rect(card.x + 38f, card.y + 302f, 80f, 28f), "メモ", _bodyStyle);
+                _eventNote = GUI.TextField(
+                    new Rect(card.x + 118f, card.y + 296f, card.width - 286f, 38f),
+                    _eventNote, 200, _textFieldStyle);
+                if (GUI.Button(new Rect(card.xMax - 158f, card.y + 296f, 120f, 38f), "メモを記録", _buttonStyle))
+                {
+                    if (string.IsNullOrWhiteSpace(_eventNote))
+                    {
+                        _formMessage = "メモの内容を入力してください";
+                    }
+                    else if (_app.AddResearchEventMarker(ResearchSessionRecorder.MarkerNote, _eventNote))
+                    {
+                        _eventNote = "";
+                        _formMessage = "";
+                    }
+                }
             }
 
-            Rect status = new Rect(card.x + 38f, card.y + cardHeight - 206f, card.width - 76f, 54f);
+            string statusText = !string.IsNullOrEmpty(_formMessage)
+                ? _formMessage
+                : recorder.LastMessage;
+            Rect status = new Rect(card.x + 38f, card.y + cardHeight - 196f, card.width - 76f, 54f);
             DrawPanel(status, recorder.IsRecording
                 ? new Color(0.52f, 0.12f, 0.10f, 0.92f)
                 : new Color(0.06f, 0.16f, 0.18f, 0.92f));
-            GUI.Label(status, recorder.LastMessage, _statusStyle);
+            GUI.Label(status, statusText, _statusStyle);
 
-            GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 139f, card.width - 76f, 46f),
+            GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 132f, card.width - 76f, 46f),
                 "保存先: " + recorder.DataDirectory, _smallStyle);
 
-            float buttonY = card.y + cardHeight - 76f;
+            float buttonY = card.y + cardHeight - 72f;
             if (!recorder.IsRecording)
             {
                 if (GUI.Button(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を開始", _primaryButtonStyle))
                 {
-                    _app.BeginResearchSession(_participantId, _condition);
+                    if (!TryParseTrialDuration(out float duration))
+                    {
+                        _formMessage = "試行時間は0（手動終了）から21600秒までです";
+                    }
+                    else
+                    {
+                        _formMessage = "";
+                        _app.BeginResearchSession(_participantId, _condition, duration);
+                    }
                 }
             }
             else if (GUI.Button(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を終了して保存", _dangerButtonStyle))
@@ -386,6 +484,28 @@ namespace VirtualRide.UI
             {
                 _app.HideResearchPanel();
             }
+        }
+
+        private bool TryParseTrialDuration(out float seconds)
+        {
+            if (string.IsNullOrWhiteSpace(_trialDurationText))
+            {
+                seconds = 0f;
+                return true;
+            }
+
+            if (!float.TryParse(_trialDurationText.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out seconds))
+            {
+                seconds = 0f;
+                return false;
+            }
+
+            if (seconds < 0f || seconds > 6f * 60f * 60f)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private void EnsureStyles()
@@ -411,6 +531,8 @@ namespace VirtualRide.UI
             _bodyStyle.wordWrap = true;
             _smallStyle = MakeLabelStyle(14, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.69f, 0.81f, 0.80f));
             _smallStyle.wordWrap = true;
+            _warningStyle = MakeLabelStyle(14, FontStyle.Bold, TextAnchor.UpperLeft, new Color(0.98f, 0.78f, 0.38f));
+            _warningStyle.wordWrap = true;
             _statusStyle = MakeLabelStyle(17, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
             _statusStyle.wordWrap = true;
 

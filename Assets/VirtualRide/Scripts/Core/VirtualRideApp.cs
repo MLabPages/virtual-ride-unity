@@ -8,6 +8,8 @@ namespace VirtualRide.Core
 {
     public sealed class VirtualRideApp : MonoBehaviour
     {
+        private const float BlockedActionMessageSeconds = 3f;
+
         private RideRoute _route;
         private RideController _rideController;
         private RideSession _session;
@@ -20,6 +22,8 @@ namespace VirtualRide.Core
         private bool _paused;
         private bool _helpVisible = true;
         private bool _researchPanelVisible;
+        private string _blockedActionMessage = string.Empty;
+        private float _blockedActionUntil;
 
         public static VirtualRideApp Instance { get; private set; }
 
@@ -41,6 +45,12 @@ namespace VirtualRide.Core
         public bool ResearchPanelVisible => _researchPanelVisible;
         public bool WindEnabled => _rideController != null && _rideController.WindEnabled;
         public string InputModeName => _activeInput != null ? _activeInput.DisplayName : "入力なし";
+        public bool IsInputLocked => _researchRecorder != null && _researchRecorder.IsRecording;
+        public bool ActiveInputIsUnvalidatedMeasurement =>
+            _activeInput != null && _activeInput.IsUnvalidatedMeasurement;
+        public string BlockedActionMessage => _blockedActionMessage;
+        public bool IsBlockedActionMessageVisible =>
+            !string.IsNullOrEmpty(_blockedActionMessage) && Time.unscaledTime < _blockedActionUntil;
 
         private void Awake()
         {
@@ -92,17 +102,28 @@ namespace VirtualRide.Core
 
             _rideController.SetSpeed(_displaySpeed);
             _session.Tick(_displaySpeed, Time.deltaTime);
+
+            bool wasRecording = _researchRecorder.IsRecording;
             _researchRecorder.Tick(unscaledDeltaTime, this);
+            if (wasRecording && !_researchRecorder.IsRecording)
+            {
+                _researchPanelVisible = true;
+                _helpVisible = false;
+            }
         }
 
         public void UseKeyboardInput()
         {
-            SetInput(_keyboardInput);
+            TrySetInput(_keyboardInput);
         }
 
         public void UseCameraInput()
         {
-            SetInput(_cameraInput);
+            if (!TrySetInput(_cameraInput))
+            {
+                return;
+            }
+
             _paused = false;
         }
 
@@ -115,6 +136,11 @@ namespace VirtualRide.Core
             if (source == null)
             {
                 throw new ArgumentNullException(nameof(source));
+            }
+
+            if (IsInputLocked)
+            {
+                throw new InvalidOperationException("記録中は入力方式を変更できません。");
             }
 
             _externalInput = source;
@@ -154,16 +180,21 @@ namespace VirtualRide.Core
             _researchPanelVisible = false;
         }
 
-        public bool BeginResearchSession(string participantId, string condition)
+        public bool BeginResearchSession(string participantId, string condition, float trialDurationSeconds = 0f)
         {
             _session.Reset();
             _paused = false;
-            return _researchRecorder.Start(participantId, condition, this);
+            return _researchRecorder.Start(participantId, condition, this, trialDurationSeconds);
         }
 
-        public bool EndResearchSession(string reason = "completed")
+        public bool EndResearchSession(string reason = ResearchSessionRecorder.StopReasonCompleted)
         {
             return _researchRecorder.Stop(this, reason);
+        }
+
+        public bool AddResearchEventMarker(string markerType, string note = "")
+        {
+            return _researchRecorder.AddEventMarker(markerType, note);
         }
 
         public void ToggleFullscreen()
@@ -178,6 +209,12 @@ namespace VirtualRide.Core
 
         public void ResetSession()
         {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は走行値をリセットできません。");
+                return;
+            }
+
             _session.Reset();
         }
 
@@ -185,11 +222,66 @@ namespace VirtualRide.Core
         {
             if (!ReferenceEquals(_activeInput, _keyboardInput))
             {
-                UseKeyboardInput();
+                if (!TrySetInput(_keyboardInput))
+                {
+                    return;
+                }
             }
 
             _keyboardInput.Step(amountKph);
             _paused = false;
+        }
+
+        public bool TryToggleCameraLegView()
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中はカメラ設定を変更できません。開始前に合わせてください。");
+                return false;
+            }
+
+            _cameraInput.ToggleLegView();
+            return true;
+        }
+
+        public bool TryCycleCameraSensitivity()
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中はカメラ設定を変更できません。開始前に合わせてください。");
+                return false;
+            }
+
+            _cameraInput.CycleSensitivity();
+            return true;
+        }
+
+        private bool TrySetInput(IRideInputSource source)
+        {
+            if (source == null)
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(_activeInput, source))
+            {
+                return true;
+            }
+
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は入力方式を変更できません。終了してから切り替えてください。");
+                return false;
+            }
+
+            SetInput(source);
+            return true;
+        }
+
+        private void NotifyActionBlocked(string message)
+        {
+            _blockedActionMessage = message;
+            _blockedActionUntil = Time.unscaledTime + BlockedActionMessageSeconds;
         }
 
         private void SetInput(IRideInputSource source)
@@ -235,13 +327,23 @@ namespace VirtualRide.Core
             {
                 ResetSession();
             }
+
+            if (_researchRecorder.IsRecording && UnityEngine.Input.GetKeyDown(KeyCode.F8))
+            {
+                AddResearchEventMarker(ResearchSessionRecorder.MarkerInstruction);
+            }
+
+            if (_researchRecorder.IsRecording && UnityEngine.Input.GetKeyDown(KeyCode.F9))
+            {
+                AddResearchEventMarker(ResearchSessionRecorder.MarkerRest);
+            }
         }
 
         private void OnDestroy()
         {
             if (ReferenceEquals(Instance, this))
             {
-                _researchRecorder?.Stop(this, "application_closed");
+                _researchRecorder?.Stop(this, ResearchSessionRecorder.StopReasonApplicationClosed);
                 _activeInput?.Deactivate();
                 Instance = null;
             }
