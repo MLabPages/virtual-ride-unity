@@ -14,6 +14,7 @@ namespace VirtualRide.Input
 
         public string DisplayName => "キーボード";
         public bool IsActive => _isActive;
+        public bool IsUnvalidatedMeasurement => false;
 
         public RideInputSample Current
         {

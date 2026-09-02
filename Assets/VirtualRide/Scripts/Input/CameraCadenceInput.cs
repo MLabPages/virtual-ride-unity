@@ -62,6 +62,7 @@ namespace VirtualRide.Input
 
         public string DisplayName => "カメラ計測";
         public bool IsActive => _isActive;
+        public bool IsUnvalidatedMeasurement => true;
         public Texture PreviewTexture => _camera;
         public bool HasPreview => _camera != null && _camera.width > 16;
         public bool BothLegsVisible { get; private set; } = true;
