@@ -2,6 +2,8 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.IO;
+using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 
 namespace VirtualRide.Core
@@ -24,6 +26,13 @@ namespace VirtualRide.Core
         private float _rideSpeedKph;
         private float _rideDistanceMetres;
         private float _rideRouteDistanceMetres;
+        private readonly List<string> _regressions = new List<string>();
+        private readonly List<float> _frameTimes = new List<float>();
+
+        private void Check(bool condition, string reason)
+        {
+            if (!condition) _regressions.Add(reason);
+        }
 
         public static bool IsRequested => Array.Exists(
             Environment.GetCommandLineArgs(),
@@ -48,6 +57,27 @@ namespace VirtualRide.Core
             _app.HideHelp();
             _app.UseKeyboardInput();
             _app.ResearchRecorder.SetDataDirectoryForTesting(Path.Combine(_outputDirectory, "research-data"));
+            _app.Session.Tick(18f, 5f);
+            _app.PreviewRouteForTesting(.15f);
+            float practiceDistance = _app.Session.DistanceMetres;
+            float practiceRoute = _app.RouteDistance;
+            Check(!_app.BeginResearchSession("", "invalid"), "Blank ID accepted");
+            Check(!_app.BeginResearchSession("SMOKE01", "invalid", float.NaN), "NaN duration accepted");
+            Check(!_app.BeginResearchSession("SMOKE01", "invalid", float.PositiveInfinity), "Infinite duration accepted");
+            Check(!_app.BeginResearchSession("SMOKE/01", "invalid"), "ID was silently renamed");
+            Check(_app.Session.DistanceMetres == practiceDistance && _app.RouteDistance == practiceRoute,
+                "Failed start reset practice data");
+            _app.ToggleResearchPanel();
+            bool wasFullscreen = Screen.fullScreen;
+            bool wasPaused = _app.IsPaused;
+            foreach (KeyCode key in new[] { KeyCode.C, KeyCode.K, KeyCode.Space, KeyCode.H, KeyCode.F, KeyCode.R })
+                _app.HandleShortcut(key);
+            Check(ReferenceEquals(_app.ActiveInput, _app.KeyboardInput) && wasPaused == _app.IsPaused &&
+                Screen.fullScreen == wasFullscreen && _app.ResearchPanelVisible && _app.Session.DistanceMetres == practiceDistance,
+                "Typing in the research form triggered a ride shortcut");
+            yield return null;
+            Check(!_app.KeyboardInput.ControlsEnabled, "Speed keys remained active behind the research form");
+            _app.HideResearchPanel();
             if (!_app.BeginResearchSession("SMOKE01", "automated"))
             {
                 WriteResult(false, _app.ResearchRecorder.LastMessage, helpScreenshot, string.Empty, string.Empty);
@@ -57,6 +87,10 @@ namespace VirtualRide.Core
             }
 
             _app.UseCameraInput();
+            Check(_app.RouteDistance == 0f && _app.Session.DistanceMetres == 0f && _app.DisplaySpeedKph == 0f,
+                "Successful start did not reset to the common starting line");
+            _app.ToggleComfortMode(); _app.ToggleMinimalHud(); _app.ToggleWind();
+            Check(_app.ComfortMode && !_app.MinimalHud && _app.WindEnabled, "Presentation settings changed while recording");
             if (!ReferenceEquals(_app.ActiveInput, _app.KeyboardInput) || !_app.IsInputLocked)
             {
                 _app.EndResearchSession("smoke_test_failed");
@@ -106,6 +140,7 @@ namespace VirtualRide.Core
             float distanceSampleEndsAt = Time.realtimeSinceStartup + 1.5f;
             while (Time.realtimeSinceStartup < distanceSampleEndsAt)
             {
+                _frameTimes.Add(Time.unscaledDeltaTime * 1000f);
                 yield return null;
             }
 
@@ -117,11 +152,29 @@ namespace VirtualRide.Core
             _rideSpeedKph = _app.DisplaySpeedKph;
             _rideDistanceMetres = _app.Session.DistanceMetres;
             _rideRouteDistanceMetres = _app.RouteDistance;
+            Check(Mathf.Abs(_rideDistanceMetres - _rideRouteDistanceMetres) < .01f,
+                "Logged distance diverged from actual route motion at low speed");
+
+            Check(!_app.BeginResearchSession("DUPLICATE", "invalid") && _app.Session.DistanceMetres == _rideDistanceMetres,
+                "Duplicate start changed an active trial");
+            _app.ResetSession();
+            Check(_app.Session.DistanceMetres == _rideDistanceMetres, "Reset changed an active trial");
+
+            _app.TogglePause();
+            float pauseDistance = _app.Session.DistanceMetres;
+            yield return new WaitForSecondsRealtime(.15f);
+            Check(_app.DisplaySpeedKph == 0f && _app.Session.DistanceMetres == pauseDistance && _app.ResearchRecorder.IsRecording,
+                "Pause changed distance or ended the trial clock");
+            _app.TogglePause();
 
             _app.EndResearchSession("smoke_test_completed");
             _manualCsvPath = _app.ResearchRecorder.CsvPath;
             _manualEventsPath = _app.ResearchRecorder.EventsPath;
             _manualSummaryPath = _app.ResearchRecorder.SummaryPath;
+            Check(_app.IsPaused && _app.DisplaySpeedKph == 0f, "Manual end did not stop motion");
+            float stoppedDistance = _app.Session.DistanceMetres;
+            yield return new WaitForSecondsRealtime(.25f);
+            Check(_app.Session.DistanceMetres == stoppedDistance, "Manual end kept accumulating distance");
 
             if (!_app.BeginResearchSession("SMOKE01", "timed", 0.6f))
             {
@@ -139,6 +192,13 @@ namespace VirtualRide.Core
 
             _timedCsvPath = _app.ResearchRecorder.CsvPath;
             _timedSummaryPath = _app.ResearchRecorder.SummaryPath;
+            Check(_app.IsPaused && _app.DisplaySpeedKph == 0f && _app.ResearchPanelVisible, "Timed end did not stop and show results");
+            Check(Mathf.Abs(_app.ResearchRecorder.RecordingElapsedSeconds - .6f) < .0001f, "Timed trial overshot its duration");
+            stoppedDistance = _app.Session.DistanceMetres;
+            yield return new WaitForSecondsRealtime(.25f);
+            Check(_app.Session.DistanceMetres == stoppedDistance, "Timed end kept accumulating distance");
+            CheckWriterFailure();
+            yield return CaptureAdditionalViews();
 
             bool passed = Validate(helpScreenshot, researchScreenshot, rideScreenshot, out string reason);
             WriteResult(passed, reason, helpScreenshot, researchScreenshot, rideScreenshot);
@@ -155,6 +215,71 @@ namespace VirtualRide.Core
             }
         }
 
+        private void CheckWriterFailure()
+        {
+            var recorder = new ResearchSessionRecorder(Path.Combine(_outputDirectory, "regression-data"));
+            Check(recorder.Start("SMOKE01", "escaping", _app), "Escaping test could not start");
+            recorder.AddEventMarker("note", "=SUM(1,2)\t\"quoted\"\u0001");
+            Check(recorder.Stop(_app), "Escaping test could not save");
+            string escaped = ReadAllText(recorder.SummaryPath);
+            Check(escaped.Contains("\\u0009") && escaped.Contains("\\u0001"), "Control characters broke summary JSON");
+            Check(ReadAllText(recorder.EventsPath).Contains("'=SUM"), "Spreadsheet formula note was not protected");
+
+            Check(recorder.Start("SMOKE01", "writefailure", _app), "Fault test could not start");
+            FieldInfo field = typeof(ResearchSessionRecorder).GetField("_writer", BindingFlags.Instance | BindingFlags.NonPublic);
+            ((StreamWriter)field.GetValue(recorder)).Dispose();
+            var fault = new StreamWriter(new FailingStream());
+            fault.Write("simulated disk error");
+            field.SetValue(recorder, fault);
+            Check(!recorder.Stop(_app) && !recorder.IsRecording && recorder.HasError && recorder.StopReason == "write_failed",
+                "Writer error left a live session or claimed successful saving");
+            using (File.Open(recorder.EventsPath, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+        }
+
+        private sealed class FailingStream : MemoryStream
+        {
+            public override void Write(byte[] buffer, int offset, int count) { throw new IOException("Simulated QA disk failure"); }
+            public override void Flush() { throw new IOException("Simulated QA flush failure"); }
+        }
+
+        private IEnumerator CaptureAdditionalViews()
+        {
+            _app.HideResearchPanel();
+            _app.KeyboardInput.SetSpeed(0f);
+            if (_app.IsPaused) _app.TogglePause();
+            _app.ToggleMinimalHud();
+            float[] progress = { .025f, .26f, .50f, .72f, .89f };
+            string[] names = { "forest", "lake", "village", "meadow", "hills" };
+            for (int i=0; i<progress.Length; i++)
+            {
+                _app.PreviewRouteForTesting(progress[i]);
+                yield return null;
+                yield return new WaitForEndOfFrame();
+                string screenshot = Path.Combine(_outputDirectory, names[i]+".png");
+                ScreenCapture.CaptureScreenshot(screenshot);
+                yield return WaitForFile(screenshot,8f);
+                Check(IsUsefulScreenshot(screenshot), names[i]+" screenshot missing");
+            }
+            Check(Camera.main.clearFlags == CameraClearFlags.Skybox && RenderSettings.skybox != null,
+                "Sky material not active in the player");
+            Check(Camera.main.fieldOfView == 68f && Mathf.Abs(Mathf.DeltaAngle(0, Camera.main.transform.parent.localEulerAngles.z)) < .01f,
+                "Comfort view changed FOV or tilted the horizon");
+            _app.ToggleMinimalHud();
+            _app.ToggleResearchPanel();
+            Screen.SetResolution(960,540,false);
+            for (int frame=0;frame<6;frame++) yield return null;
+            yield return new WaitForEndOfFrame();
+            string setup = Path.Combine(_outputDirectory,"setup-small.png");
+            ScreenCapture.CaptureScreenshot(setup);
+            yield return WaitForFile(setup,8f);
+            _frameTimes.Sort();
+            float median = _frameTimes.Count > 0 ? _frameTimes[_frameTimes.Count/2] : 0;
+            float p95 = _frameTimes.Count > 0 ? _frameTimes[Mathf.Min(_frameTimes.Count-1,Mathf.FloorToInt(_frameTimes.Count*.95f))] : 0;
+            File.WriteAllText(Path.Combine(_outputDirectory,"performance.json"),
+                "{\"samples\":"+_frameTimes.Count+",\"medianFrameMs\":"+median.ToString("0.00",CultureInfo.InvariantCulture)+
+                ",\"p95FrameMs\":"+p95.ToString("0.00",CultureInfo.InvariantCulture)+"}");
+        }
+
         private bool Validate(
             string helpScreenshot,
             string researchScreenshot,
@@ -162,6 +287,11 @@ namespace VirtualRide.Core
             out string reason)
         {
             int rendererCount = FindObjectsByType<Renderer>().Length;
+            if (_regressions.Count > 0)
+            {
+                reason = string.Join("; ", _regressions);
+                return false;
+            }
             if (Camera.main == null)
             {
                 reason = "Main camera was not created.";
@@ -261,9 +391,12 @@ namespace VirtualRide.Core
                 "\"bothLegsVisible\":",
                 "\"sensitivity\":",
                 "\"metersPerRevolution\":",
-                "\"eventCount\": 3",
+                "\"eventCount\": 5",
+                "\"markerType\": \"pause\"",
+                "\"markerType\": \"resume\"",
                 "\"markerType\": \"instruction\"",
-                "\"eventsFile\":"
+                "\"eventsFile\":",
+                "\"visualRevision\": \"valley-2026.09\"", "\"comfortMode\": true", "\"minimalHud\": false", "\"routeStartMetres\": 0"
             };
 
             for (int i = 0; i < required.Length; i++)

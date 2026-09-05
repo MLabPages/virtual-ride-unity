@@ -15,6 +15,7 @@ namespace VirtualRide.Input
         public string DisplayName => "キーボード";
         public bool IsActive => _isActive;
         public bool IsUnvalidatedMeasurement => false;
+        public bool ControlsEnabled { get; set; } = true;
 
         public RideInputSample Current
         {
@@ -48,7 +49,7 @@ namespace VirtualRide.Input
 
         public void Tick(float unscaledDeltaTime)
         {
-            if (!_isActive)
+            if (!_isActive || !ControlsEnabled)
             {
                 return;
             }

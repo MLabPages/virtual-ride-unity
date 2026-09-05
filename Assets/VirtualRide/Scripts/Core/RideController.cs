@@ -15,10 +15,23 @@ namespace VirtualRide.Core
         private float _visualRoll;
         private float _bobPhase;
         private bool _windEnabled = true;
+        private bool _comfortMode = true;
 
         public float RouteDistance => _routeDistance;
         public Camera RideCamera => _camera;
         public bool WindEnabled => _windEnabled;
+        public bool ComfortMode => _comfortMode;
+
+        public void ToggleComfortMode() { _comfortMode = !_comfortMode; }
+
+        public void ResetRoute(float distance = 0f)
+        {
+            _routeDistance = Mathf.Repeat(distance, _route.TotalLength);
+            _visualRoll = 0f;
+            _bobPhase = 0f;
+            _speedKph = 0f;
+            Advance(0f);
+        }
 
         public void Initialize(RideRoute route)
         {
@@ -39,14 +52,13 @@ namespace VirtualRide.Core
             _windEnabled = !_windEnabled;
         }
 
-        private void Update()
+        public void Advance(float deltaTime)
         {
             if (_route == null)
             {
                 return;
             }
 
-            float deltaTime = Time.deltaTime;
             _routeDistance += _speedKph / 3.6f * deltaTime;
             _routeDistance = Mathf.Repeat(_routeDistance, _route.TotalLength);
 
@@ -58,24 +70,26 @@ namespace VirtualRide.Core
 
             float cornerAngle = Vector3.SignedAngle(forward, aheadForward, Vector3.up);
             float desiredRoll = Mathf.Clamp(-cornerAngle * 0.55f, -8f, 8f) * Mathf.InverseLerp(3f, 26f, _speedKph);
+            if (_comfortMode) desiredRoll = 0f;
             _visualRoll = Mathf.Lerp(_visualRoll, desiredRoll, 1f - Mathf.Exp(-deltaTime * 4f));
 
             float speedFactor = Mathf.InverseLerp(0f, 36f, _speedKph);
+            float motionFactor = _comfortMode ? 0f : speedFactor;
             _bobPhase += deltaTime * Mathf.Lerp(1.2f, 8.5f, speedFactor);
-            float bob = Mathf.Sin(_bobPhase) * 0.012f * speedFactor;
-            float sway = Mathf.Sin(_bobPhase * 0.5f) * 0.016f * speedFactor;
+            float bob = Mathf.Sin(_bobPhase) * 0.012f * motionFactor;
+            float sway = Mathf.Sin(_bobPhase * 0.5f) * 0.016f * motionFactor;
             _cameraRig.localPosition = new Vector3(sway, 1.62f + bob, 0.05f);
             _cameraRig.localRotation = Quaternion.Euler(
-                Mathf.Sin(_bobPhase * 0.5f) * 0.18f * speedFactor,
+                Mathf.Sin(_bobPhase * 0.5f) * 0.18f * motionFactor,
                 0f,
-                _visualRoll);
+                _comfortMode ? 0f : _visualRoll);
 
             _handlebarRig.localRotation = Quaternion.Euler(
                 0f,
                 Mathf.Sin(_bobPhase * 0.5f) * 0.7f * speedFactor,
                 -_visualRoll * 0.25f);
 
-            _camera.fieldOfView = Mathf.Lerp(_camera.fieldOfView, Mathf.Lerp(64f, 76f, speedFactor),
+            _camera.fieldOfView = _comfortMode ? 68f : Mathf.Lerp(_camera.fieldOfView, Mathf.Lerp(64f, 74f, speedFactor),
                 1f - Mathf.Exp(-deltaTime * 2.5f));
             _camera.transform.localPosition = Vector3.zero;
             _camera.transform.localRotation = Quaternion.identity;
@@ -99,11 +113,11 @@ namespace VirtualRide.Core
             cameraObject.tag = "MainCamera";
             cameraObject.transform.SetParent(_cameraRig, false);
             _camera = cameraObject.AddComponent<Camera>();
-            _camera.clearFlags = CameraClearFlags.SolidColor;
+            _camera.clearFlags = CameraClearFlags.Skybox;
             _camera.backgroundColor = new Color(0.52f, 0.76f, 0.91f);
             _camera.fieldOfView = 64f;
             _camera.nearClipPlane = 0.08f;
-            _camera.farClipPlane = 650f;
+            _camera.farClipPlane = 1100f;
             _camera.allowHDR = true;
             _camera.allowMSAA = true;
             cameraObject.AddComponent<AudioListener>();

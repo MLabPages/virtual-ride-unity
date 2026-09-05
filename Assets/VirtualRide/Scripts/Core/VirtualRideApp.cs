@@ -22,6 +22,7 @@ namespace VirtualRide.Core
         private bool _paused;
         private bool _helpVisible = true;
         private bool _researchPanelVisible;
+        private bool _minimalHud;
         private string _blockedActionMessage = string.Empty;
         private float _blockedActionUntil;
 
@@ -44,6 +45,9 @@ namespace VirtualRide.Core
         public bool HelpVisible => _helpVisible;
         public bool ResearchPanelVisible => _researchPanelVisible;
         public bool WindEnabled => _rideController != null && _rideController.WindEnabled;
+        public bool ComfortMode => _rideController != null && _rideController.ComfortMode;
+        public bool MinimalHud => _minimalHud;
+        public bool KeyboardControlsBlocked => _helpVisible || _researchPanelVisible;
         public string InputModeName => _activeInput != null ? _activeInput.DisplayName : "入力なし";
         public bool IsInputLocked => _researchRecorder != null && _researchRecorder.IsRecording;
         public bool ActiveInputIsUnvalidatedMeasurement =>
@@ -89,26 +93,31 @@ namespace VirtualRide.Core
         {
             HandleKeyboardShortcuts();
             float unscaledDeltaTime = Time.unscaledDeltaTime;
+            _keyboardInput.ControlsEnabled = !KeyboardControlsBlocked;
             _activeInput?.Tick(unscaledDeltaTime);
 
             RideInputSample sample = ActiveSample;
-            float targetSpeed = _paused ? 0f : Mathf.Clamp(sample.SpeedKph, 0f, 45f);
+            bool validInput = !float.IsNaN(sample.SpeedKph) && !float.IsInfinity(sample.SpeedKph)
+                && sample.State != RideInputState.Error && sample.State != RideInputState.Offline;
+            float targetSpeed = _paused || !validInput ? 0f : Mathf.Clamp(sample.SpeedKph, 0f, 45f);
+            float step = _researchRecorder.IsRecording && _researchRecorder.HasTrialDuration
+                ? Mathf.Min(unscaledDeltaTime, _researchRecorder.RemainingTrialSeconds) : unscaledDeltaTime;
             float changeRate = targetSpeed > _displaySpeed ? 5.5f : 7.5f;
-            _displaySpeed = Mathf.MoveTowards(_displaySpeed, targetSpeed, changeRate * Time.deltaTime);
+            _displaySpeed = _paused ? 0f : Mathf.MoveTowards(_displaySpeed, targetSpeed, changeRate * step);
             if (_displaySpeed < 0.05f)
             {
                 _displaySpeed = 0f;
             }
 
             _rideController.SetSpeed(_displaySpeed);
-            _session.Tick(_displaySpeed, Time.deltaTime);
+            _rideController.Advance(step);
+            _session.Tick(_displaySpeed, step);
 
             bool wasRecording = _researchRecorder.IsRecording;
-            _researchRecorder.Tick(unscaledDeltaTime, this);
+            _researchRecorder.Tick(step, this);
             if (wasRecording && !_researchRecorder.IsRecording)
             {
-                _researchPanelVisible = true;
-                _helpVisible = false;
+                FinishTrial();
             }
         }
 
@@ -150,6 +159,8 @@ namespace VirtualRide.Core
         public void TogglePause()
         {
             _paused = !_paused;
+            if (_paused) StopMotion();
+            if (IsInputLocked) AddResearchEventMarker(_paused ? "pause" : "resume");
         }
 
         public void ToggleHelp()
@@ -182,19 +193,31 @@ namespace VirtualRide.Core
 
         public bool BeginResearchSession(string participantId, string condition, float trialDurationSeconds = 0f)
         {
+            if (!_researchRecorder.Start(participantId, condition, this, trialDurationSeconds)) return false;
             _session.Reset();
+            _rideController.ResetRoute();
+            StopMotion();
             _paused = false;
-            return _researchRecorder.Start(participantId, condition, this, trialDurationSeconds);
+            _researchPanelVisible = false;
+            _helpVisible = false;
+            _blockedActionMessage = string.Empty;
+            return true;
         }
 
         public bool EndResearchSession(string reason = ResearchSessionRecorder.StopReasonCompleted)
         {
-            return _researchRecorder.Stop(this, reason);
+            bool wasRecording = _researchRecorder.IsRecording;
+            bool saved = _researchRecorder.Stop(this, reason);
+            if (wasRecording) FinishTrial();
+            return saved;
         }
 
         public bool AddResearchEventMarker(string markerType, string note = "")
         {
-            return _researchRecorder.AddEventMarker(markerType, note);
+            bool wasRecording = IsInputLocked;
+            bool result = _researchRecorder.AddEventMarker(markerType, note);
+            if (wasRecording && !IsInputLocked) FinishTrial();
+            return result;
         }
 
         public void ToggleFullscreen()
@@ -204,7 +227,42 @@ namespace VirtualRide.Core
 
         public void ToggleWind()
         {
+            if (IsInputLocked) { NotifyActionBlocked("記録中は音・表示設定を変更できません。"); return; }
             _rideController.ToggleWind();
+        }
+
+        public void ToggleComfortMode()
+        {
+            if (IsInputLocked) { NotifyActionBlocked("記録中は視点設定を変更できません。"); return; }
+            _rideController.ToggleComfortMode();
+        }
+
+        public void ToggleMinimalHud()
+        {
+            if (IsInputLocked) { NotifyActionBlocked("記録中は表示設定を変更できません。"); return; }
+            _minimalHud = !_minimalHud;
+        }
+
+        private void StopMotion()
+        {
+            _displaySpeed = 0f;
+            _rideController.SetSpeed(0f);
+        }
+
+        private void FinishTrial()
+        {
+            _blockedActionMessage = string.Empty;
+            _paused = true;
+            StopMotion();
+            _researchPanelVisible = true;
+            _helpVisible = false;
+        }
+
+        // Used only by the opt-in player verification, never during a participant session.
+        internal void PreviewRouteForTesting(float progress)
+        {
+            if (!VirtualRideSmokeTest.IsRequested || IsInputLocked) return;
+            _rideController.ResetRoute(_route.TotalLength * progress);
         }
 
         public void ResetSession()
@@ -216,6 +274,8 @@ namespace VirtualRide.Core
             }
 
             _session.Reset();
+            _rideController.ResetRoute();
+            StopMotion();
         }
 
         public void AdjustKeyboardSpeed(float amountKph)
@@ -298,44 +358,34 @@ namespace VirtualRide.Core
 
         private void HandleKeyboardShortcuts()
         {
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Space))
-            {
-                TogglePause();
-            }
+            foreach (KeyCode key in ShortcutKeys)
+                if (UnityEngine.Input.GetKeyDown(key)) HandleShortcut(key);
+        }
 
-            if (UnityEngine.Input.GetKeyDown(KeyCode.C))
-            {
-                UseCameraInput();
-            }
+        private static readonly KeyCode[] ShortcutKeys = { KeyCode.Escape, KeyCode.Space, KeyCode.C,
+            KeyCode.K, KeyCode.H, KeyCode.F, KeyCode.R, KeyCode.Tab, KeyCode.F7, KeyCode.F8, KeyCode.F9 };
 
-            if (UnityEngine.Input.GetKeyDown(KeyCode.K))
+        internal void HandleShortcut(KeyCode key)
+        {
+            if (key == KeyCode.Escape)
             {
-                UseKeyboardInput();
+                if (_researchPanelVisible) HideResearchPanel();
+                else ToggleHelp();
+                return;
             }
-
-            if (UnityEngine.Input.GetKeyDown(KeyCode.H) || UnityEngine.Input.GetKeyDown(KeyCode.Escape))
+            if (key == KeyCode.F8 && IsInputLocked) AddResearchEventMarker(ResearchSessionRecorder.MarkerInstruction);
+            if (key == KeyCode.F9 && IsInputLocked) AddResearchEventMarker(ResearchSessionRecorder.MarkerRest);
+            if (KeyboardControlsBlocked) return;
+            switch (key)
             {
-                ToggleHelp();
-            }
-
-            if (UnityEngine.Input.GetKeyDown(KeyCode.F))
-            {
-                ToggleFullscreen();
-            }
-
-            if (UnityEngine.Input.GetKeyDown(KeyCode.R))
-            {
-                ResetSession();
-            }
-
-            if (_researchRecorder.IsRecording && UnityEngine.Input.GetKeyDown(KeyCode.F8))
-            {
-                AddResearchEventMarker(ResearchSessionRecorder.MarkerInstruction);
-            }
-
-            if (_researchRecorder.IsRecording && UnityEngine.Input.GetKeyDown(KeyCode.F9))
-            {
-                AddResearchEventMarker(ResearchSessionRecorder.MarkerRest);
+                case KeyCode.Space: TogglePause(); break;
+                case KeyCode.C: UseCameraInput(); break;
+                case KeyCode.K: UseKeyboardInput(); break;
+                case KeyCode.H: ToggleHelp(); break;
+                case KeyCode.F: ToggleFullscreen(); break;
+                case KeyCode.R: ResetSession(); break;
+                case KeyCode.Tab: ToggleMinimalHud(); break;
+                case KeyCode.F7: ToggleResearchPanel(); break;
             }
         }
 

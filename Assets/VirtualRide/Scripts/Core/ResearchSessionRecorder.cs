@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using VirtualRide.Input;
+using VirtualRide.World;
 
 namespace VirtualRide.Core
 {
@@ -33,6 +34,7 @@ namespace VirtualRide.Core
         private DateTimeOffset _startedAt;
         private float _recordingElapsed;
         private float _nextSampleAt;
+        private float _lastSampleAt = -1f;
         private int _sampleCount;
         private string _dataDirectory;
         private float _trialDurationSeconds;
@@ -45,6 +47,9 @@ namespace VirtualRide.Core
         private bool _cameraBothLegsVisible = true;
         private string _cameraSensitivity = string.Empty;
         private float _cameraMetersPerRevolution;
+        private bool _comfortMode;
+        private bool _minimalHud;
+        private bool _windEnabled;
 
         public ResearchSessionRecorder(string dataDirectory = null)
         {
@@ -63,6 +68,7 @@ namespace VirtualRide.Core
         public string SummaryPath { get; private set; } = string.Empty;
         public string DataDirectory => _dataDirectory;
         public string LastMessage { get; private set; }
+        public bool HasError { get; private set; }
         public string StopReason { get; private set; } = string.Empty;
         public string StartingInputMode => _startingInputMode;
         public float RecordingElapsedSeconds => _recordingElapsed;
@@ -99,23 +105,30 @@ namespace VirtualRide.Core
                 return false;
             }
 
-            if (trialDurationSeconds < 0f || trialDurationSeconds > MaximumTrialDurationSeconds)
+            if (float.IsNaN(trialDurationSeconds) || float.IsInfinity(trialDurationSeconds)
+                || trialDurationSeconds < 0f || trialDurationSeconds > MaximumTrialDurationSeconds)
             {
                 LastMessage = "試行時間は0（手動終了）から6時間までです";
                 return false;
             }
 
-            ParticipantId = SanitizeIdentifier(participantId);
-            Condition = SanitizeIdentifier(condition);
-            if (string.IsNullOrEmpty(ParticipantId))
+            string safeId = SanitizeIdentifier(participantId);
+            string safeCondition = SanitizeIdentifier(condition);
+            if (string.IsNullOrEmpty(safeId))
             {
                 LastMessage = "匿名の参加者IDを入力してください";
                 return false;
             }
 
-            if (string.IsNullOrEmpty(Condition))
+            if (string.IsNullOrEmpty(safeCondition))
             {
                 LastMessage = "実験条件を入力してください";
+                return false;
+            }
+
+            if (safeId != participantId.Trim() || safeCondition != condition.Trim())
+            {
+                LastMessage = "IDと条件には40文字以内の文字・数字・ハイフン・下線を使ってください";
                 return false;
             }
 
@@ -128,6 +141,8 @@ namespace VirtualRide.Core
                 }
 
                 CaptureStartMetadata(app);
+                ParticipantId = safeId;
+                Condition = safeCondition;
                 _trialDurationSeconds = trialDurationSeconds;
                 _startedAt = DateTimeOffset.Now;
                 SessionId = _startedAt.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) +
@@ -154,8 +169,13 @@ namespace VirtualRide.Core
                 _recordingElapsed = 0f;
                 _nextSampleAt = 0f;
                 _sampleCount = 0;
-                WriteSample(app);
+                _lastSampleAt = -1f;
+                // The first sample represents the common starting line without mutating the ride.
+                // Only a fully opened/flushed recording lets the app reset its live state.
+                WriteSample(app, true);
+                _writer.Flush();
                 _nextSampleAt = SampleIntervalSeconds;
+                HasError = false;
                 LastMessage = HasTrialDuration
                     ? "実験記録中: " + ParticipantId + " / " + Condition + "  （" +
                       Mathf.RoundToInt(_trialDurationSeconds) + "秒で自動保存）"
@@ -164,8 +184,7 @@ namespace VirtualRide.Core
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
             {
-                CloseWriter();
-                LastMessage = "記録ファイルを作成できません: " + exception.Message;
+                Fail("記録ファイルを作成できません", exception);
                 return false;
             }
         }
@@ -196,8 +215,7 @@ namespace VirtualRide.Core
                 }
                 catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
                 {
-                    CloseWriter();
-                    LastMessage = "記録を継続できません: " + exception.Message;
+                    Fail("記録を継続できません", exception);
                     return;
                 }
             }
@@ -217,7 +235,7 @@ namespace VirtualRide.Core
 
             try
             {
-                if (app != null)
+                if (app != null && (_recordingElapsed > _lastSampleAt + .0001f || _pendingSampleMarkers.Count > 0))
                 {
                     WriteSample(app);
                 }
@@ -234,8 +252,7 @@ namespace VirtualRide.Core
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
             {
-                CloseWriter();
-                LastMessage = "記録の終了処理に失敗しました: " + exception.Message;
+                Fail("記録の終了処理に失敗しました", exception);
                 return false;
             }
         }
@@ -286,8 +303,7 @@ namespace VirtualRide.Core
             }
             catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
             {
-                CloseWriter();
-                LastMessage = "イベントを保存できません: " + exception.Message;
+                Fail("イベントを保存できません", exception);
                 return false;
             }
         }
@@ -304,6 +320,9 @@ namespace VirtualRide.Core
             _productName = Application.productName ?? string.Empty;
             _companyName = Application.companyName ?? string.Empty;
             _platform = Application.platform.ToString();
+            _comfortMode = app.ComfortMode;
+            _minimalHud = app.MinimalHud;
+            _windEnabled = app.WindEnabled;
 
             CameraCadenceInput camera = app.CameraInput;
             if (camera != null)
@@ -320,7 +339,7 @@ namespace VirtualRide.Core
             }
         }
 
-        private void WriteSample(VirtualRideApp app)
+        private void WriteSample(VirtualRideApp app, bool initial = false)
         {
             RideInputSample sample = app.ActiveSample;
             string recordedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
@@ -340,18 +359,19 @@ namespace VirtualRide.Core
                 Csv(sample.State.ToString()),
                 Csv(sample.Status),
                 Number(sample.SpeedKph),
-                Number(app.DisplaySpeedKph),
+                Number(initial ? 0f : app.DisplaySpeedKph),
                 sample.HasCadence ? Number(sample.CadenceRpm) : string.Empty,
                 Number(sample.Confidence),
-                Number(app.Session.DistanceMetres),
-                Number(app.Session.MovingSeconds),
-                Number(app.RouteDistance),
-                Number(app.RouteProgress),
-                Csv(app.AreaName),
-                app.IsPaused ? "true" : "false",
+                Number(initial ? 0f : app.Session.DistanceMetres),
+                Number(initial ? 0f : app.Session.MovingSeconds),
+                Number(initial ? 0f : app.RouteDistance),
+                Number(initial ? 0f : app.RouteProgress),
+                Csv(initial ? app.Route.GetAreaName(0f) : app.AreaName),
+                !initial && app.IsPaused ? "true" : "false",
                 Csv(eventMarker)
             }));
             _sampleCount++;
+            _lastSampleAt = _recordingElapsed;
         }
 
         private void WriteSummary(VirtualRideApp app, string reason)
@@ -386,6 +406,12 @@ namespace VirtualRide.Core
                 "  \"productName\": \"" + Json(_productName) + "\",\n" +
                 "  \"companyName\": \"" + Json(_companyName) + "\",\n" +
                 "  \"platform\": \"" + Json(_platform) + "\",\n" +
+                "  \"visualRevision\": \"" + ScenicWorldBuilder.VisualRevision + "\",\n" +
+                "  \"comfortMode\": " + (_comfortMode ? "true" : "false") + ",\n" +
+                "  \"minimalHud\": " + (_minimalHud ? "true" : "false") + ",\n" +
+                "  \"windEnabled\": " + (_windEnabled ? "true" : "false") + ",\n" +
+                "  \"routeStartMetres\": 0,\n" +
+                "  \"elapsedIncludesPauses\": true,\n" +
                 "  \"camera\": {\n" +
                 "    \"bothLegsVisible\": " + (_cameraBothLegsVisible ? "true" : "false") + ",\n" +
                 "    \"sensitivity\": \"" + Json(_cameraSensitivity) + "\",\n" +
@@ -432,10 +458,22 @@ namespace VirtualRide.Core
 
         private void CloseWriter()
         {
-            _writer?.Dispose();
+            StreamWriter samples = _writer;
+            StreamWriter events = _eventsWriter;
             _writer = null;
-            _eventsWriter?.Dispose();
             _eventsWriter = null;
+            try { samples?.Dispose(); }
+            finally { events?.Dispose(); }
+        }
+
+        private void Fail(string message, Exception exception)
+        {
+            try { CloseWriter(); }
+            catch (Exception closeError) when (closeError is IOException || closeError is UnauthorizedAccessException)
+            { Debug.LogWarning("Research stream close failed: " + closeError.Message); }
+            HasError = true;
+            StopReason = "write_failed";
+            LastMessage = message + ": " + exception.Message + "\n保存先を確認してください。途中のファイルは残しています。";
         }
 
         private bool EnsureDataDirectory()
@@ -524,22 +562,30 @@ namespace VirtualRide.Core
 
         private static string Number(float value)
         {
+            if (float.IsNaN(value) || float.IsInfinity(value)) return "null";
             return value.ToString("0.####", CultureInfo.InvariantCulture);
         }
 
         private static string Csv(string value)
         {
             string safe = value ?? string.Empty;
+            // Quoting alone does not prevent spreadsheets interpreting notes as formulas.
+            string trimmed = safe.TrimStart();
+            if (trimmed.Length > 0 && "=+-@".IndexOf(trimmed[0]) >= 0) safe = "'" + safe;
             return "\"" + safe.Replace("\"", "\"\"").Replace("\r", " ").Replace("\n", " ") + "\"";
         }
 
         private static string Json(string value)
         {
-            return (value ?? string.Empty)
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\r", "\\r")
-                .Replace("\n", "\\n");
+            var result = new StringBuilder();
+            foreach (char c in value ?? string.Empty)
+            {
+                if (c == '\\') result.Append("\\\\");
+                else if (c == '"') result.Append("\\\"");
+                else if (c < 32) result.Append("\\u" + ((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                else result.Append(c);
+            }
+            return result.ToString();
         }
     }
 

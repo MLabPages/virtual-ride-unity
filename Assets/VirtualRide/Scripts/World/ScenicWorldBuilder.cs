@@ -8,6 +8,9 @@ namespace VirtualRide.World
 {
     public sealed class ScenicWorldBuilder
     {
+        public const string VisualRevision = "valley-2026.09";
+        private Mesh[] _treeTrunks;
+        private Mesh[] _treeCrowns;
         private readonly RideRoute _route;
         private readonly Transform _root;
         private readonly Dictionary<string, Material> _materials = new Dictionary<string, Material>();
@@ -30,7 +33,7 @@ namespace VirtualRide.World
             builder.CreateTrees();
             builder.CreateVillage();
             builder.CreateFields();
-            builder.CreateMountains();
+            builder.CreateVergeDetails();
             builder.CreateLandmarks();
             return worldObject.transform;
         }
@@ -39,54 +42,43 @@ namespace VirtualRide.World
         {
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogColor = new Color(0.68f, 0.80f, 0.86f);
-            RenderSettings.fogStartDistance = 105f;
-            RenderSettings.fogEndDistance = 430f;
+            RenderSettings.fogColor = new Color(.78f, .86f, .87f);
+            RenderSettings.fogStartDistance = 160f;
+            RenderSettings.fogEndDistance = 780f;
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.55f, 0.69f, 0.80f);
-            RenderSettings.ambientEquatorColor = new Color(0.38f, 0.48f, 0.39f);
-            RenderSettings.ambientGroundColor = new Color(0.16f, 0.19f, 0.13f);
-            RenderSettings.ambientIntensity = 1.05f;
-
-            Shader skyShader = Shader.Find("Skybox/Procedural");
-            if (skyShader != null)
-            {
-                Material sky = new Material(skyShader) { name = "Morning Sky" };
-                if (sky.HasProperty("_SkyTint"))
-                {
-                    sky.SetColor("_SkyTint", new Color(0.35f, 0.62f, 0.88f));
-                    sky.SetColor("_GroundColor", new Color(0.42f, 0.48f, 0.35f));
-                    sky.SetFloat("_AtmosphereThickness", 0.85f);
-                    sky.SetFloat("_Exposure", 1.18f);
-                }
-
-                RenderSettings.skybox = sky;
-            }
+            RenderSettings.ambientSkyColor = new Color(.38f, .46f, .54f);
+            RenderSettings.ambientEquatorColor = new Color(.28f, .33f, .27f);
+            RenderSettings.ambientGroundColor = new Color(.14f, .17f, .11f);
+            RenderSettings.ambientIntensity = 1f;
+            RenderSettings.skybox = new Material(Resources.Load<Shader>("VirtualRideSky")) { name = "Valley daylight" };
+            QualitySettings.antiAliasing = 4;
+            QualitySettings.shadowDistance = 85f;
+            QualitySettings.shadowResolution = ShadowResolution.High;
+            QualitySettings.shadowCascades = 2;
+            QualitySettings.shadows = ShadowQuality.All;
+            QualitySettings.vSyncCount = 0;
 
             GameObject sunObject = new GameObject("Morning Sun");
             sunObject.transform.SetParent(_root, false);
-            sunObject.transform.rotation = Quaternion.Euler(42f, -28f, 0f);
+            sunObject.transform.rotation = Quaternion.LookRotation(-new Vector3(.34f, .64f, -.42f).normalized);
             Light sun = sunObject.AddComponent<Light>();
             sun.type = LightType.Directional;
-            sun.color = new Color(1f, 0.91f, 0.72f);
-            sun.intensity = 1.25f;
+            sun.color = new Color(1f, .94f, .82f);
+            sun.intensity = 1.02f;
             sun.shadows = LightShadows.Soft;
-            sun.shadowStrength = 0.58f;
-            sun.shadowBias = 0.055f;
-            sun.shadowNormalBias = 0.5f;
+            sun.shadowStrength = .65f;
+            sun.shadowBias = .035f;
+            sun.shadowNormalBias = .3f;
             RenderSettings.sun = sun;
         }
 
         private void CreateGround()
         {
-            GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-            ground.name = "Grassland";
-            ground.transform.SetParent(_root, false);
-            ground.transform.position = new Vector3(0f, -0.04f, 0f);
-            ground.transform.localScale = new Vector3(72f, 1f, 62f);
-            ground.GetComponent<Renderer>().sharedMaterial = GetMaterial(
-                "Meadow", new Color(0.25f, 0.48f, 0.22f), 0.02f, 0f);
-            SetShadowMode(ground, ShadowCastingMode.Off, true);
+            Material terrain = GetMaterial("Valley meadow", Color.white, .02f, 0);
+            terrain.SetFloat("_VertexTint", 1);
+            terrain.SetFloat("_DetailStrength", .65f);
+            terrain.SetFloat("_DetailScale", .12f);
+            MeshObject("Rolling valley", _root, LandscapeMeshes.Terrain(), terrain, ShadowCastingMode.Off);
         }
 
         private void CreateRoad()
@@ -104,6 +96,10 @@ namespace VirtualRide.World
                 0.035f,
                 GetMaterial("Warm asphalt", new Color(0.155f, 0.17f, 0.17f), 0.22f, 0.04f));
             SetShadowMode(road, ShadowCastingMode.Off, true);
+            road.GetComponent<Renderer>().sharedMaterial.SetFloat("_DetailStrength", .45f);
+            road.GetComponent<Renderer>().sharedMaterial.SetFloat("_DetailScale", 3f);
+            shoulders.GetComponent<Renderer>().sharedMaterial.SetFloat("_DetailStrength", .8f);
+            shoulders.GetComponent<Renderer>().sharedMaterial.SetFloat("_DetailScale", 2f);
 
             CreateEdgeLine("Left edge line", -_route.RoadHalfWidth + 0.22f);
             CreateEdgeLine("Right edge line", _route.RoadHalfWidth - 0.22f);
@@ -215,33 +211,35 @@ namespace VirtualRide.World
 
         private void CreateLake()
         {
-            GameObject lake = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            lake.name = "Lake";
-            lake.transform.SetParent(_root, false);
-            lake.transform.position = new Vector3(-38f, 0.02f, -32f);
-            lake.transform.localScale = new Vector3(54f, 0.035f, 34f);
-            lake.GetComponent<Renderer>().sharedMaterial = GetMaterial(
-                "Lake water", new Color(0.12f, 0.53f, 0.70f), 0.82f, 0.08f);
-            DisableCollider(lake);
-            SetShadowMode(lake, ShadowCastingMode.Off, true);
+            _route.Evaluate(_route.TotalLength*.32f, out Vector3 routePoint, out Vector3 forward, out Vector3 right);
+            Vector3 center = routePoint-right*48f;
+            Material shore=GetMaterial("Pale lakeshore",new Color(.63f,.61f,.43f),.03f,0);
+            shore.SetFloat("_DetailStrength", .6f);
+            MeshObject("Natural lakeshore",_root,LandscapeMeshes.Lake(center,forward,right,66,40,.002f),shore,ShadowCastingMode.Off);
+            var water = new Material(Resources.Load<Shader>("VirtualRideWater")) { name="Rippling lake" };
+            MeshObject("Lake",_root,LandscapeMeshes.Lake(center,forward,right,63,37,.009f),water,ShadowCastingMode.Off);
 
-            Material reeds = GetMaterial("Reeds", new Color(0.36f, 0.48f, 0.14f), 0.05f, 0f);
-            Transform reedParent = new GameObject("Lakeside reeds").transform;
-            reedParent.SetParent(_root, false);
-            for (int i = 0; i < 55; i++)
+            Material reeds = GetMaterial("Reeds",new Color(.48f,.55f,.23f),.01f,0);
+            var reedMesh = new LandscapeMeshes();
+            for (int i=0; i<270; i++)
             {
-                float angle = i / 55f * Mathf.PI * 2f + RandomRange(-0.07f, 0.07f);
-                Vector3 position = new Vector3(
-                    -38f + Mathf.Cos(angle) * RandomRange(52f, 57f),
-                    RandomRange(0.25f, 0.5f),
-                    -32f + Mathf.Sin(angle) * RandomRange(32f, 36f));
-                GameObject reed = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                reed.name = "Reed cluster";
-                reed.transform.SetParent(reedParent, false);
-                reed.transform.position = position;
-                reed.transform.localScale = new Vector3(0.15f, position.y * 2f, 0.15f);
-                reed.GetComponent<Renderer>().sharedMaterial = reeds;
-                DisableCollider(reed);
+                float angle=RandomRange(0,Mathf.PI*2);
+                Vector3 p=center+forward*Mathf.Cos(angle)*RandomRange(63,65)+right*Mathf.Sin(angle)*RandomRange(37,39);
+                p.y=.02f;
+                reedMesh.Grass(p,RandomRange(.4f,1.1f),Color.white,angle);
+            }
+            MeshObject("Lakeside reeds",_root,reedMesh.Finish("Reeds"),reeds,ShadowCastingMode.Off);
+            Material wood=GetMaterial("Jetty wood",new Color(.45f,.34f,.22f),.1f,0);
+            for(int i=0;i<28;i++)
+            {
+                Vector3 p=center+right*(32+i*.46f); p.y=.28f;
+                CreateField(_root,p,new Vector3(2.9f,.14f,.40f),Quaternion.LookRotation(right).eulerAngles.y,wood);
+            }
+            for(int i=0;i<4;i++)
+            for(int side=-1;side<=1;side+=2)
+            {
+                Vector3 p=center+right*(32+i*4)+forward*side*1.25f;
+                CreateFencePost(_root,p,Quaternion.identity,wood);
             }
         }
 
@@ -257,7 +255,7 @@ namespace VirtualRide.World
                 GetMaterial("Sunlit foliage", new Color(0.36f, 0.57f, 0.19f), 0.02f, 0f)
             };
 
-            for (int i = 0; i < _route.Count; i += 5)
+            for (int i = 0; i < _route.Count; i += 3)
             {
                 float progress = i / (float)_route.Count;
                 bool villageGap = progress > 0.43f && progress < 0.67f;
@@ -276,16 +274,16 @@ namespace VirtualRide.World
                         continue;
                     }
 
-                    float offset = RandomRange(7.5f, progress < 0.22f ? 18f : 30f);
+                    float offset = RandomRange(7.5f, progress < 0.22f ? 20f : 35f);
                     Vector3 position = routePoint + right * side * offset;
                     position.y = 0f;
-                    float scale = RandomRange(0.8f, 1.55f);
+                    float scale = RandomRange(.8f, 1.35f);
                     CreateTree(treeParent, position, scale, trunkMaterial, foliage[_random.Next(foliage.Length)]);
                 }
             }
 
             // A few distant groves make open stretches feel less empty.
-            for (int i = 0; i < 45; i++)
+            for (int i = 0; i < 110; i++)
             {
                 float angle = RandomRange(0f, Mathf.PI * 2f);
                 float radius = RandomRange(205f, 300f);
@@ -297,34 +295,49 @@ namespace VirtualRide.World
 
         private void CreateTree(Transform parent, Vector3 position, float scale, Material trunk, Material leaves)
         {
-            Transform tree = new GameObject("Tree").transform;
-            tree.SetParent(parent, false);
-            tree.position = position;
-            tree.rotation = Quaternion.Euler(0f, RandomRange(0f, 360f), 0f);
+            if (_treeCrowns == null) BuildTreeMeshes();
+            Transform tree=new GameObject("Branching woodland tree").transform;
+            tree.SetParent(parent,false);
+            position.y=LandscapeMeshes.TerrainHeight(position.x,position.z);
+            tree.position=position;
+            tree.rotation=Quaternion.Euler(0,RandomRange(0,360),0);
+            tree.localScale=Vector3.one*scale;
+            int variant=_random.Next(_treeCrowns.Length);
+            leaves.SetFloat("_VertexTint",1);
+            MeshObject("Trunk and branches",tree,_treeTrunks[variant],trunk);
+            MeshObject("Irregular canopy",tree,_treeCrowns[variant],leaves);
+        }
 
-            float trunkHeight = 2.1f * scale;
-            GameObject trunkObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            trunkObject.name = "Trunk";
-            trunkObject.transform.SetParent(tree, false);
-            trunkObject.transform.localPosition = new Vector3(0f, trunkHeight * 0.5f, 0f);
-            trunkObject.transform.localScale = new Vector3(0.22f * scale, trunkHeight * 0.5f, 0.22f * scale);
-            trunkObject.GetComponent<Renderer>().sharedMaterial = trunk;
-            DisableCollider(trunkObject);
-
-            for (int layer = 0; layer < 3; layer++)
+        private void BuildTreeMeshes()
+        {
+            _treeTrunks=new Mesh[4]; _treeCrowns=new Mesh[4];
+            for(int variant=0;variant<4;variant++)
             {
-                GameObject crown = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                crown.name = "Crown";
-                crown.transform.SetParent(tree, false);
-                crown.transform.localPosition = new Vector3(
-                    layer == 1 ? 0.35f * scale : -0.12f * layer,
-                    trunkHeight + (0.5f + layer * 0.52f) * scale,
-                    layer == 2 ? 0.18f * scale : 0f);
-                float crownScale = (1.65f - layer * 0.12f) * scale;
-                crown.transform.localScale = new Vector3(crownScale, crownScale * 1.08f, crownScale);
-                crown.GetComponent<Renderer>().sharedMaterial = leaves;
-                DisableCollider(crown);
+                var bark=new LandscapeMeshes(); var crown=new LandscapeMeshes();
+                bark.Branch(Vector3.zero,new Vector3(.12f,5.6f,0),.23f,.08f,Color.white);
+                for(int branch=0;branch<7;branch++)
+                {
+                    float angle=branch*2.39996f+variant;
+                    Vector3 tip=new Vector3(Mathf.Cos(angle)*(1.5f+branch*.08f),4.3f+branch*.36f,Mathf.Sin(angle)*1.8f);
+                    bark.Branch(new Vector3(.08f,2.8f+branch*.23f,0),tip,.1f,.02f,Color.white);
+                    crown.Crown(tip+Vector3.up*.5f,new Vector3(1.7f,1.3f,1.55f),variant*13+branch,
+                        Color.Lerp(new Color(.8f,.9f,.75f),Color.white,branch/6f));
+                }
+                crown.Crown(new Vector3(0,6.6f,0),new Vector3(1.8f,1.5f,1.7f),variant+17,Color.white);
+                _treeTrunks[variant]=bark.Finish("Shared branches "+variant);
+                _treeCrowns[variant]=crown.Finish("Shared canopy "+variant);
             }
+        }
+
+        private static GameObject MeshObject(string name, Transform parent, Mesh mesh, Material material,
+            ShadowCastingMode shadows=ShadowCastingMode.On)
+        {
+            var obj=new GameObject(name);
+            obj.transform.SetParent(parent,false);
+            obj.AddComponent<MeshFilter>().sharedMesh=mesh;
+            var renderer=obj.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial=material; renderer.shadowCastingMode=shadows;
+            return obj;
         }
 
         private void CreateVillage()
@@ -347,7 +360,7 @@ namespace VirtualRide.World
                 int side = i % 3 == 0 ? -1 : 1;
                 Vector3 position = routePosition + right * side * RandomRange(11f, 20f);
                 position.y = 0f;
-                CreateHouse(village, position, Quaternion.LookRotation(-right * side, Vector3.up),
+                CreateHouse(village, position, Quaternion.LookRotation(right * side, Vector3.up),
                     RandomRange(0.85f, 1.2f), walls[i % walls.Length], roof, windows);
             }
         }
@@ -378,6 +391,11 @@ namespace VirtualRide.World
             roof.transform.localPosition = new Vector3(0f, 3.3f * scale, 0f);
             roof.GetComponent<Renderer>().sharedMaterial = roofMaterial;
 
+            Material trim=GetMaterial("Ivory trim",new Color(.9f,.86f,.72f),.1f,0);
+            CreateField(house,new Vector3(0,.95f,-1.88f)*scale,new Vector3(.85f,1.9f,.10f)*scale,0,
+                GetMaterial("Timber doors",new Color(.23f,.30f,.27f),.12f,0),true);
+            CreateField(house,new Vector3(1.6f,4.4f,.55f)*scale,new Vector3(.58f,1.6f,.7f)*scale,0,wallMaterial,true);
+
             for (int side = -1; side <= 1; side += 2)
             {
                 GameObject window = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -387,6 +405,9 @@ namespace VirtualRide.World
                 window.transform.localScale = new Vector3(0.82f * scale, 0.92f * scale, 0.04f * scale);
                 window.GetComponent<Renderer>().sharedMaterial = windowMaterial;
                 DisableCollider(window);
+                CreateField(house,new Vector3(side*1.25f,1.75f,-1.91f)*scale,new Vector3(.055f,.96f,.06f)*scale,0,trim,true);
+                CreateField(house,new Vector3(side*1.25f,1.75f,-1.92f)*scale,new Vector3(.86f,.055f,.06f)*scale,0,trim,true);
+                CreateField(house,new Vector3(side*1.25f,1.24f,-1.95f)*scale,new Vector3(1f,.10f,.25f)*scale,0,trim,true);
             }
         }
 
@@ -426,22 +447,42 @@ namespace VirtualRide.World
             CreateField(fields, new Vector3(6f, 0.013f, 78f), new Vector3(56f, 0.02f, 32f), -12f, flowers);
 
             Material fenceMaterial = GetMaterial("Wood fence", new Color(0.46f, 0.29f, 0.15f), 0.08f, 0f);
+            var rails=new LandscapeMeshes();
+            Vector3 previous=Vector3.zero;
             for (int i = 0; i < 32; i++)
             {
                 float distance = _route.TotalLength * (0.70f + i * 0.0045f);
                 _route.Evaluate(distance, out Vector3 position, out Vector3 forward, out Vector3 right);
                 position += right * 6.2f;
                 CreateFencePost(fields, position, Quaternion.LookRotation(forward, Vector3.up), fenceMaterial);
+                if(i>0)
+                {
+                    rails.Branch(previous+Vector3.up*.48f,position+Vector3.up*.48f,.055f,.055f,Color.white);
+                    rails.Branch(previous+Vector3.up*1.05f,position+Vector3.up*1.05f,.055f,.055f,Color.white);
+                }
+                previous=position;
             }
+            MeshObject("Meadow fence rails",fields,rails.Finish("Fence rails"),fenceMaterial);
+            gold.SetFloat("_DetailStrength",.8f);
+            gold.SetFloat("_DetailScale",.7f);
+            flowers.SetFloat("_DetailStrength",.8f);
         }
 
-        private static void CreateField(Transform parent, Vector3 position, Vector3 scale, float yaw, Material material)
+        private static void CreateField(Transform parent, Vector3 position, Vector3 scale, float yaw, Material material, bool local=false)
         {
             GameObject field = GameObject.CreatePrimitive(PrimitiveType.Cube);
             field.name = "Cultivated field";
             field.transform.SetParent(parent, false);
-            field.transform.position = position;
-            field.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            if(local)
+            {
+                field.transform.localPosition=position;
+                field.transform.localRotation=Quaternion.Euler(0f,yaw,0f);
+            }
+            else
+            {
+                field.transform.position=position;
+                field.transform.rotation=Quaternion.Euler(0f,yaw,0f);
+            }
             field.transform.localScale = scale;
             field.GetComponent<Renderer>().sharedMaterial = material;
             DisableCollider(field);
@@ -459,30 +500,27 @@ namespace VirtualRide.World
             DisableCollider(post);
         }
 
-        private void CreateMountains()
+        private void CreateVergeDetails()
         {
-            Transform mountains = new GameObject("Distant mountains").transform;
-            mountains.SetParent(_root, false);
-            Material[] mountainMaterials =
+            Material grass=GetMaterial("Meadow blades",Color.white,.02f,0);
+            grass.SetFloat("_VertexTint",1);
+            for(int chunk=0;chunk<24;chunk++)
             {
-                GetMaterial("Blue mountain", new Color(0.29f, 0.40f, 0.42f), 0.03f, 0f),
-                GetMaterial("Green mountain", new Color(0.24f, 0.37f, 0.29f), 0.03f, 0f),
-                GetMaterial("Hazy mountain", new Color(0.40f, 0.48f, 0.47f), 0.03f, 0f)
-            };
-
-            for (int i = 0; i < 16; i++)
-            {
-                float angle = i / 16f * Mathf.PI * 2f + 0.08f * Mathf.Sin(i * 1.7f);
-                float radius = RandomRange(275f, 360f);
-                Vector3 position = new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius * 0.78f);
-                float height = RandomRange(38f, 90f);
-                float width = RandomRange(45f, 92f);
-                GameObject mountain = CreateCone("Mountain", 9, width, height);
-                mountain.transform.SetParent(mountains, false);
-                mountain.transform.position = position;
-                mountain.transform.rotation = Quaternion.Euler(0f, RandomRange(0f, 360f), RandomRange(-4f, 4f));
-                mountain.GetComponent<Renderer>().sharedMaterial = mountainMaterials[i % mountainMaterials.Length];
-                SetShadowMode(mountain, ShadowCastingMode.Off, true);
+                var mesh=new LandscapeMeshes();
+                for(int i=0;i<210;i++)
+                {
+                    float distance=_route.TotalLength*(chunk+RandomRange(0,1))/24;
+                    _route.Evaluate(distance,out Vector3 p,out _,out Vector3 right);
+                    int side=_random.Next(2)==0 ? -1 : 1;
+                    p+=right*side*RandomRange(4.1f,7.4f);
+                    p.y=.02f;
+                    Color tint=Color.Lerp(new Color(.29f,.42f,.12f),new Color(.64f,.62f,.29f),RandomRange(0,1));
+                    mesh.Grass(p,RandomRange(.16f,.52f),tint,RandomRange(0,6.28f));
+                    if (i%7==0)
+                        mesh.Crown(p+Vector3.up*.35f,Vector3.one*.065f,i,
+                            chunk%3==0 ? new Color(.71f,.63f,.82f) : new Color(.96f,.89f,.55f));
+                }
+                MeshObject("Verge meadow "+chunk,_root,mesh.Finish("Batched meadow "+chunk),grass,ShadowCastingMode.Off);
             }
         }
 
@@ -519,37 +557,6 @@ namespace VirtualRide.World
             }
         }
 
-        private static GameObject CreateCone(string objectName, int sides, float radius, float height)
-        {
-            Vector3[] vertices = new Vector3[sides + 2];
-            vertices[0] = new Vector3(0f, height, 0f);
-            vertices[vertices.Length - 1] = Vector3.zero;
-            for (int i = 0; i < sides; i++)
-            {
-                float angle = i / (float)sides * Mathf.PI * 2f;
-                vertices[i + 1] = new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius);
-            }
-
-            int[] triangles = new int[sides * 6];
-            for (int i = 0; i < sides; i++)
-            {
-                int next = (i + 1) % sides;
-                int triangle = i * 6;
-                triangles[triangle] = 0;
-                triangles[triangle + 1] = i + 1;
-                triangles[triangle + 2] = next + 1;
-                triangles[triangle + 3] = vertices.Length - 1;
-                triangles[triangle + 4] = next + 1;
-                triangles[triangle + 5] = i + 1;
-            }
-
-            Mesh mesh = new Mesh { name = objectName + " mesh", vertices = vertices, triangles = triangles };
-            mesh.RecalculateNormals();
-            GameObject cone = new GameObject(objectName);
-            cone.AddComponent<MeshFilter>().sharedMesh = mesh;
-            cone.AddComponent<MeshRenderer>();
-            return cone;
-        }
 
         private Material GetMaterial(string materialName, Color color, float smoothness, float metallic)
         {
@@ -565,7 +572,7 @@ namespace VirtualRide.World
                     "VirtualRideScenic shader is missing from Assets/VirtualRide/Resources.");
             }
 
-            Material material = new Material(shader) { name = materialName, color = color };
+            Material material = new Material(shader) { name = materialName, color = color, enableInstancing = true };
             if (material.HasProperty("_Glossiness"))
             {
                 material.SetFloat("_Glossiness", smoothness);
