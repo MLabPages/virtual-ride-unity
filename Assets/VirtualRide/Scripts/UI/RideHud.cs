@@ -302,7 +302,11 @@ namespace VirtualRide.UI
 
             Rect preview = new Rect(panel.x + 18f, panel.y + 86f, panel.width - 36f, 158f);
             GUI.DrawTexture(preview, _secondaryTexture, ScaleMode.StretchToFill);
-            if (camera.HasPreview)
+            if (!_app.PedalPreviewVisible)
+            {
+                GUI.Label(preview, "ペダル映像は非表示\n（計測は続けています）", _statusStyle);
+            }
+            else if (camera.HasPreview)
             {
                 float rotation = camera.PreviewTextureRotation();
                 if (Mathf.Approximately(rotation, 0f))
@@ -474,7 +478,7 @@ namespace VirtualRide.UI
 
             ResearchSessionRecorder recorder = _app.ResearchRecorder;
             float cardWidth = Mathf.Min(740f, width - 80f);
-            float cardHeight = Mathf.Min(recorder.IsRecording ? 620f : 600f, height - 50f);
+            float cardHeight = Mathf.Min(recorder.IsRecording ? 620f : 700f, height - 50f);
             Rect card = new Rect((width - cardWidth) * 0.5f, (height - cardHeight) * 0.5f, cardWidth, cardHeight);
             DrawPanel(card, new Color(0.035f, 0.075f, 0.08f, 0.98f));
 
@@ -510,7 +514,17 @@ namespace VirtualRide.UI
                 if (GUI.Button(new Rect(card.x+38,card.y+328,210,38), _app.ComfortMode ? "視点: 揺れなし" : "視点: ゆるやかな揺れ", _buttonStyle)) _app.ToggleComfortMode();
                 if (GUI.Button(new Rect(card.x+260,card.y+328,210,38), _app.MinimalHud ? "表示: 景色に集中" : "表示: 計器あり", _buttonStyle)) _app.ToggleMinimalHud();
                 if (GUI.Button(new Rect(card.x+482,card.y+328,card.width-520,38), _app.WindEnabled ? "走行音: ON" : "走行音: OFF", _buttonStyle)) _app.ToggleWind();
-                GUI.Label(new Rect(card.x+38,card.y+372,card.width-76,24), "視点・表示・音は記録中固定。試行時間には一時停止中の時間も含みます。", _smallStyle);
+                DrawVideoSpeedControls(card);
+                if (GUI.Button(new Rect(card.x + 38f, card.y + 418f, 210f, 38f),
+                    _app.PedalPreviewVisible ? "ペダル映像: 表示" : "ペダル映像: 非表示", _buttonStyle))
+                {
+                    _app.TogglePedalPreview();
+                }
+
+                GUI.Label(new Rect(card.x + 260f, card.y + 424f, card.width - 298f, 30f),
+                    "非表示でもカメラ計測は続きます", _smallStyle);
+                GUI.Label(new Rect(card.x + 38f, card.y + 464f, card.width - 76f, 40f),
+                    "視点・表示・音・映像の速度・ペダル映像は記録中固定。試行時間には一時停止中の時間も含みます。", _smallStyle);
             }
             else
             {
@@ -523,7 +537,8 @@ namespace VirtualRide.UI
                     $"経過: {FormatTime(recorder.RecordingElapsedSeconds)}{remaining}  ・  {recorder.SampleCount} 件",
                     _bodyStyle);
                 GUI.Label(new Rect(card.x + 38f, card.y + 186f, card.width - 76f, 24f),
-                    "入力: " + recorder.StartingInputMode + "（記録中は変更できません）", _smallStyle);
+                    "入力: " + recorder.StartingInputMode + "  ・  映像: " + VideoSpeedLabel() + "（記録中は変更できません）",
+                    _smallStyle);
 
                 GUI.Label(new Rect(card.x + 38f, card.y + 220f, card.width - 76f, 26f), "イベントマーカー", _headingStyle);
                 if (GUI.Button(new Rect(card.x + 38f, card.y + 252f, 150f, 40f), "指示 (F8)", _buttonStyle))
@@ -602,6 +617,51 @@ namespace VirtualRide.UI
                 _app.HideResearchPanel();
                 GUI.FocusControl(null);
             }
+        }
+
+        private void DrawVideoSpeedControls(Rect card)
+        {
+            float y = card.y + 372f;
+            if (GUI.Button(new Rect(card.x + 38f, y, 210f, 38f),
+                _app.IsVideoSpeedFixed ? "映像: 一定速度" : "映像: ペダル連動", _buttonStyle))
+            {
+                _app.SetVideoSpeedMode(_app.IsVideoSpeedFixed
+                    ? VirtualRideApp.VideoSpeedMode.PedalLinked
+                    : VirtualRideApp.VideoSpeedMode.Fixed);
+            }
+
+            if (!_app.IsVideoSpeedFixed)
+            {
+                GUI.Label(new Rect(card.x + 260f, y + 6f, card.width - 298f, 30f),
+                    "ペダルの推定速度で景色が進みます", _smallStyle);
+                return;
+            }
+
+            if (GUI.Button(new Rect(card.x + 260f, y, 44f, 38f), "−", _buttonStyle))
+            {
+                _app.SetFixedVideoSpeed(_app.FixedVideoSpeedKph - 0.5f);
+            }
+
+            GUI.Label(new Rect(card.x + 308f, y, 108f, 38f), _app.FixedVideoSpeedKph.ToString("0.0") + " km/h", _statusStyle);
+            if (GUI.Button(new Rect(card.x + 420f, y, 44f, 38f), "＋", _buttonStyle))
+            {
+                _app.SetFixedVideoSpeed(_app.FixedVideoSpeedKph + 0.5f);
+            }
+
+            float previousAverage = _app.Session.AverageSpeedKph;
+            if (previousAverage >= VirtualRideApp.MinimumFixedVideoSpeedKph &&
+                GUI.Button(new Rect(card.x + 474f, y, card.width - 512f, 38f),
+                    $"直前の平均 {previousAverage:0.0} km/h", _buttonStyle))
+            {
+                _app.SetFixedVideoSpeed(previousAverage);
+            }
+        }
+
+        private string VideoSpeedLabel()
+        {
+            return _app.IsVideoSpeedFixed
+                ? "一定 " + _app.FixedVideoSpeedKph.ToString("0.0") + " km/h"
+                : "ペダル連動";
         }
 
         private bool TryParseTrialDuration(out float seconds)

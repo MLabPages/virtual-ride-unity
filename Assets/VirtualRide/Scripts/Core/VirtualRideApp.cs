@@ -8,6 +8,14 @@ namespace VirtualRide.Core
 {
     public sealed class VirtualRideApp : MonoBehaviour
     {
+        public enum VideoSpeedMode
+        {
+            PedalLinked,
+            Fixed
+        }
+
+        public const float MinimumFixedVideoSpeedKph = 5f;
+        public const float MaximumFixedVideoSpeedKph = 35f;
         private const float BlockedActionMessageSeconds = 3f;
 
         private RideRoute _route;
@@ -23,6 +31,9 @@ namespace VirtualRide.Core
         private bool _helpVisible = true;
         private bool _researchPanelVisible;
         private bool _minimalHud;
+        private VideoSpeedMode _videoSpeedMode = VideoSpeedMode.PedalLinked;
+        private float _fixedVideoSpeedKph = 15f;
+        private bool _pedalPreviewVisible = true;
         private string _blockedActionMessage = string.Empty;
         private float _blockedActionUntil;
 
@@ -47,6 +58,10 @@ namespace VirtualRide.Core
         public bool WindEnabled => _rideController != null && _rideController.WindEnabled;
         public bool ComfortMode => _rideController != null && _rideController.ComfortMode;
         public bool MinimalHud => _minimalHud;
+        public VideoSpeedMode VideoSpeed => _videoSpeedMode;
+        public bool IsVideoSpeedFixed => _videoSpeedMode == VideoSpeedMode.Fixed;
+        public float FixedVideoSpeedKph => _fixedVideoSpeedKph;
+        public bool PedalPreviewVisible => _pedalPreviewVisible;
         public bool KeyboardControlsBlocked => _helpVisible || _researchPanelVisible;
         public string InputModeName => _activeInput != null ? _activeInput.DisplayName : "入力なし";
         public bool IsInputLocked => _researchRecorder != null && _researchRecorder.IsRecording;
@@ -99,7 +114,11 @@ namespace VirtualRide.Core
             RideInputSample sample = ActiveSample;
             bool validInput = !float.IsNaN(sample.SpeedKph) && !float.IsInfinity(sample.SpeedKph)
                 && sample.State != RideInputState.Error && sample.State != RideInputState.Offline;
-            float targetSpeed = _paused || !validInput ? 0f : Mathf.Clamp(sample.SpeedKph, 0f, 45f);
+            // In the fixed condition the scenery ignores pedalling; the input is still measured and logged.
+            float targetSpeed = _paused ? 0f
+                : IsVideoSpeedFixed ? _fixedVideoSpeedKph
+                : !validInput ? 0f
+                : Mathf.Clamp(sample.SpeedKph, 0f, 45f);
             float step = _researchRecorder.IsRecording && _researchRecorder.HasTrialDuration
                 ? Mathf.Min(unscaledDeltaTime, _researchRecorder.RemainingTrialSeconds) : unscaledDeltaTime;
             float changeRate = targetSpeed > _displaySpeed ? 5.5f : 7.5f;
@@ -241,6 +260,42 @@ namespace VirtualRide.Core
         {
             if (IsInputLocked) { NotifyActionBlocked("記録中は表示設定を変更できません。"); return; }
             _minimalHud = !_minimalHud;
+        }
+
+        public bool SetVideoSpeedMode(VideoSpeedMode mode)
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は映像の速度条件を変更できません。");
+                return false;
+            }
+
+            _videoSpeedMode = mode;
+            return true;
+        }
+
+        public bool SetFixedVideoSpeed(float speedKph)
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は映像の速度条件を変更できません。");
+                return false;
+            }
+
+            if (float.IsNaN(speedKph) || float.IsInfinity(speedKph))
+            {
+                return false;
+            }
+
+            _fixedVideoSpeedKph = Mathf.Clamp(Mathf.Round(speedKph * 10f) / 10f,
+                MinimumFixedVideoSpeedKph, MaximumFixedVideoSpeedKph);
+            return true;
+        }
+
+        public void TogglePedalPreview()
+        {
+            if (IsInputLocked) { NotifyActionBlocked("記録中はペダル映像の表示を変更できません。"); return; }
+            _pedalPreviewVisible = !_pedalPreviewVisible;
         }
 
         private void StopMotion()

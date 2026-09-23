@@ -23,6 +23,7 @@ namespace VirtualRide.Core
         private string _manualSummaryPath;
         private string _timedCsvPath;
         private string _timedSummaryPath;
+        private string _timedStopReason = string.Empty;
         private float _rideSpeedKph;
         private float _rideDistanceMetres;
         private float _rideRouteDistanceMetres;
@@ -192,11 +193,13 @@ namespace VirtualRide.Core
 
             _timedCsvPath = _app.ResearchRecorder.CsvPath;
             _timedSummaryPath = _app.ResearchRecorder.SummaryPath;
+            _timedStopReason = _app.ResearchRecorder.StopReason;
             Check(_app.IsPaused && _app.DisplaySpeedKph == 0f && _app.ResearchPanelVisible, "Timed end did not stop and show results");
             Check(Mathf.Abs(_app.ResearchRecorder.RecordingElapsedSeconds - .6f) < .0001f, "Timed trial overshot its duration");
             stoppedDistance = _app.Session.DistanceMetres;
             yield return new WaitForSecondsRealtime(.25f);
             Check(_app.Session.DistanceMetres == stoppedDistance, "Timed end kept accumulating distance");
+            yield return CheckFixedVideoSpeed();
             CheckWriterFailure();
             yield return CaptureAdditionalViews();
 
@@ -213,6 +216,43 @@ namespace VirtualRide.Core
                 Debug.LogError("VIRTUAL_RIDE_SMOKE_TEST: FAIL - " + reason);
                 Application.Quit(1);
             }
+        }
+
+        private IEnumerator CheckFixedVideoSpeed()
+        {
+            _app.KeyboardInput.SetSpeed(0f);
+            Check(_app.SetVideoSpeedMode(VirtualRideApp.VideoSpeedMode.Fixed) && _app.SetFixedVideoSpeed(12f),
+                "Fixed video speed could not be selected before recording");
+            _app.TogglePedalPreview();
+            if (!_app.BeginResearchSession("SMOKE01", "fixed"))
+            {
+                Check(false, "Fixed video speed trial could not start: " + _app.ResearchRecorder.LastMessage);
+                yield break;
+            }
+
+            Check(!_app.SetVideoSpeedMode(VirtualRideApp.VideoSpeedMode.PedalLinked) && !_app.SetFixedVideoSpeed(20f),
+                "Video speed condition changed while recording");
+            _app.TogglePedalPreview();
+            Check(!_app.PedalPreviewVisible, "Pedal preview visibility changed while recording");
+
+            float deadline = Time.realtimeSinceStartup + 6f;
+            while (_app.DisplaySpeedKph < 11.9f && Time.realtimeSinceStartup < deadline)
+            {
+                yield return null;
+            }
+
+            yield return new WaitForSecondsRealtime(.3f);
+            Check(Mathf.Abs(_app.DisplaySpeedKph - 12f) < .05f && _app.ActiveSample.SpeedKph == 0f,
+                "Fixed video speed followed the pedal input instead of the fixed value");
+            _app.EndResearchSession("smoke_test_completed");
+            string summary = ReadAllText(_app.ResearchRecorder.SummaryPath);
+            Check(summary.Contains("\"videoSpeedMode\": \"fixed\"") && summary.Contains("\"fixedVideoSpeedKph\": 12") &&
+                summary.Contains("\"pedalPreviewVisible\": false"),
+                "Fixed video speed condition was not recorded in the summary");
+
+            _app.SetVideoSpeedMode(VirtualRideApp.VideoSpeedMode.PedalLinked);
+            _app.TogglePedalPreview();
+            Check(!_app.IsVideoSpeedFixed && _app.PedalPreviewVisible, "Video speed settings could not be restored");
         }
 
         private void CheckWriterFailure()
@@ -421,7 +461,7 @@ namespace VirtualRide.Core
             }
 
             if (!string.Equals(
-                    _app.ResearchRecorder.StopReason,
+                    _timedStopReason,
                     ResearchSessionRecorder.StopReasonTrialDurationElapsed,
                     StringComparison.Ordinal))
             {
@@ -469,7 +509,7 @@ namespace VirtualRide.Core
                 $"  \"researchSummary\": \"{EscapeJson(_manualSummaryPath ?? _app.ResearchRecorder.SummaryPath)}\",\n" +
                 $"  \"researchSamples\": {_app.ResearchRecorder.SampleCount},\n" +
                 $"  \"timedCsv\": \"{EscapeJson(_timedCsvPath ?? string.Empty)}\",\n" +
-                $"  \"timedStopReason\": \"{EscapeJson(_app.ResearchRecorder.StopReason)}\",\n" +
+                $"  \"timedStopReason\": \"{EscapeJson(_timedStopReason)}\",\n" +
                 $"  \"helpScreenshot\": \"{EscapeJson(helpScreenshot)}\",\n" +
                 $"  \"researchScreenshot\": \"{EscapeJson(researchScreenshot)}\",\n" +
                 $"  \"rideScreenshot\": \"{EscapeJson(rideScreenshot)}\"\n" +

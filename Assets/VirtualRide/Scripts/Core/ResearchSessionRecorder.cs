@@ -49,6 +49,9 @@ namespace VirtualRide.Core
         private float _cameraMetersPerRevolution;
         private string _cameraDeviceName = string.Empty;
         private string _cameraRegion = string.Empty;
+        private string _videoSpeedMode = string.Empty;
+        private float _fixedVideoSpeedKph;
+        private bool _pedalPreviewVisible = true;
         private bool _comfortMode;
         private bool _minimalHud;
         private bool _windEnabled;
@@ -325,6 +328,9 @@ namespace VirtualRide.Core
             _comfortMode = app.ComfortMode;
             _minimalHud = app.MinimalHud;
             _windEnabled = app.WindEnabled;
+            _videoSpeedMode = app.IsVideoSpeedFixed ? "fixed" : "pedal_linked";
+            _fixedVideoSpeedKph = app.FixedVideoSpeedKph;
+            _pedalPreviewVisible = app.PedalPreviewVisible;
 
             CameraCadenceInput camera = app.CameraInput;
             if (camera != null)
@@ -416,6 +422,9 @@ namespace VirtualRide.Core
                 "  \"comfortMode\": " + (_comfortMode ? "true" : "false") + ",\n" +
                 "  \"minimalHud\": " + (_minimalHud ? "true" : "false") + ",\n" +
                 "  \"windEnabled\": " + (_windEnabled ? "true" : "false") + ",\n" +
+                "  \"videoSpeedMode\": \"" + Json(_videoSpeedMode) + "\",\n" +
+                "  \"fixedVideoSpeedKph\": " + (_videoSpeedMode == "fixed" ? Number(_fixedVideoSpeedKph) : "null") + ",\n" +
+                "  \"pedalPreviewVisible\": " + (_pedalPreviewVisible ? "true" : "false") + ",\n" +
                 "  \"routeStartMetres\": 0,\n" +
                 "  \"elapsedIncludesPauses\": true,\n" +
                 "  \"camera\": {\n" +

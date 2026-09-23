@@ -63,8 +63,8 @@ P001_baseline_20260829_143000_a1b2c3d4_summary.json
 | `input_mode` | 開始時に固定された入力方式 |
 | `input_state` | 入力の準備・探索・検出・エラー状態 |
 | `input_status` | 画面にも出る入力状態の説明 |
-| `input_speed_kph` | 入力が推定・取得した速度 |
-| `display_speed_kph` | 仮想空間の移動に実際に使った平滑化後の速度 |
+| `input_speed_kph` | 入力が推定・取得した速度（一定速度条件でもペダル側の値） |
+| `display_speed_kph` | 仮想空間の移動に実際に使った平滑化後の速度（一定速度条件では設定速度へ加速した後は一定） |
 | `cadence_rpm` | ペダル回転数。取得できない場合は空欄 |
 | `confidence` | 入力値の信頼度（0〜1） |
 | `distance_metres` | セッション内の実移動距離。0.8km/h未満の低速移動も含む |
@@ -107,6 +107,9 @@ CSVの文字列が空白を除いて `=` / `+` / `-` / `@` で始まる場合は
 - `applicationVersion`、`unityVersion`、`productName`、`companyName`、`platform`
 - `visualRevision`: 景観の版（現在 `valley-2026.09`）。同じCSV形式でも景観が異なる試行を区別する
 - `comfortMode`（揺れなし・固定視野角68度）、`minimalHud`（景色に集中）、`windEnabled`（走行音）：開始時に固定した設定
+- `videoSpeedMode`: 景色の速度条件。`pedal_linked`（ペダル連動）または `fixed`（一定速度）。この項目がない要約JSONは、比較条件の機能より前の版で、すべてペダル連動
+- `fixedVideoSpeedKph`: 一定速度条件の速度（km/h）。ペダル連動では `null`
+- `pedalPreviewVisible`: ペダル確認パネルのカメラ映像を表示していたか。「景色に集中」ではパネル自体を表示しない
 - `routeStartMetres`: `0`（共通のスタート位置）、`elapsedIncludesPauses`: `true`
 - `camera.bothLegsVisible`、`camera.sensitivity`、`camera.metersPerRevolution`（開始時のカメラ設定）
 - `camera.deviceName`（開始時に選択していたカメラ名。カメラを一度も起動していなければ空）、`camera.measurementRegion`（解析範囲: `Full` / `Lower` / `Left` / `Right` / `Center`）。この2項目がない要約JSONは、カメラ選択機能より前の版で記録したもの
