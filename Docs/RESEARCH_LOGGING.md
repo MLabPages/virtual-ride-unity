@@ -28,7 +28,7 @@ P001_baseline_20260829_143000_a1b2c3d4_summary.json
 
 ## 実験セッションの進め方
 
-1. 使う入力（キーボードまたはカメラ）を先に選び、カメラの場合は使うカメラ、計測範囲、片足／両足、感度を合わせておきます。
+1. 使う入力（キーボード、カメラ、Bluetoothセンサー）を先に選びます。Bluetoothはrpmが表示されるまで接続し、カメラの場合は使うカメラ、計測範囲、片足／両足、感度を合わせます。
 2. 「実験記録」を開き、匿名の参加者IDと条件名を入れます。
 3. 必要なら試行時間を秒で入れます。空欄または `0` は手動終了です。
 4. 視点・表示・音を選び、「記録を開始」を押します。ファイル作成・初期行の書込みに成功した場合のみ、同じスタート地点と表示速度・距離・時間0に戻り、入力・カメラ・視点・表示・音が固定されます。
@@ -103,6 +103,7 @@ CSVの文字列が空白を除いて `=` / `+` / `-` / `@` で始まる場合は
 - 行数、経過時間、移動時間、距離、平均・最高速度
 - 平均速度は0.8km/h以上の区間の距離÷その区間の時間で算出。全距離÷`movingSeconds`とは微差が生じる場合があります
 - `startingInputMode` / `finalInputMode`（記録中は入力固定のため通常は一致）
+- `startingInputDeviceName`（Bluetooth時の機器名。Bluetoothアドレスは保存しない）と `inputProtocol`（`Bluetooth LE CSC 0x1816/0x2A5B` など）
 - `inputLocked`: 常に `true`（この版のセッションは開始時に入力を固定する）
 - `applicationVersion`、`unityVersion`、`productName`、`companyName`、`platform`
 - `visualRevision`: 景観の版（現在 `valley-2026.09`）。同じCSV形式でも景観が異なる試行を区別する
@@ -110,9 +111,20 @@ CSVの文字列が空白を除いて `=` / `+` / `-` / `@` で始まる場合は
 - `videoSpeedMode`: 景色の速度条件。`pedal_linked`（ペダル連動）または `fixed`（一定速度）。この項目がない要約JSONは、比較条件の機能より前の版で、すべてペダル連動
 - `fixedVideoSpeedKph`: 一定速度条件の速度（km/h）。ペダル連動では `null`
 - `pedalPreviewVisible`: ペダル確認パネルのカメラ映像を表示していたか。「景色に集中」ではパネル自体を表示しない
+- `displayAccelerationKphPerSecond` / `displayDecelerationKphPerSecond`: 景色の速度の加速・減速の上限（9 / 12 km/h/秒）。この項目がない要約JSONは、以前の値（5.5 / 7.5）で記録したもの
 - `routeStartMetres`: `0`（共通のスタート位置）、`elapsedIncludesPauses`: `true`
 - `camera.bothLegsVisible`、`camera.sensitivity`、`camera.metersPerRevolution`（開始時のカメラ設定）
 - `camera.deviceName`（開始時に選択していたカメラ名。カメラを一度も起動していなければ空）、`camera.measurementRegion`（解析範囲: `Full` / `Lower` / `Left` / `Right` / `Center`）。この2項目がない要約JSONは、カメラ選択機能より前の版で記録したもの
+- `camera.algorithm`: 回転数の推定方法の版（現在 `camera-cadence-2026.09b`）。この項目がない要約JSONは、6秒窓の旧方式で記録したもの。旧方式は停止の判定が遅く、周期の2倍を拾って回転数を低く推定することがあったため、新旧のデータを無条件に結合しない
+
+## 反応テストの保存ファイル
+
+反応テスト（F6）の結果は `VirtualRideResearchData/response-tests/` に保存されます。
+
+- `response_YYYYMMDD_HHMMSS.json`: カメラ名・計測範囲・片足/両足・感度・推定方法の版・加減速と、各回（50 / 65 / 80 rpm）の `detectLatencySeconds`、`displayStartLatencySeconds`（景色が目標速度の50%に達するまで）、`stopDetectLatencySeconds`、`displayStopLatencySeconds`（景色が0.5 km/h 未満になるまで）、`meanRpm`、`rpmErrorPercent`、`detectedFraction`、およびそれらの中央値。検出できなかった値は `null`
+- `response_YYYYMMDD_HHMMSS_frames.csv`: フレームごとの経過秒・段階・目標回転数・入力状態・推定回転数・入力速度・景色の速度
+
+秒数は合図からの時間で、人が合図に反応する時間を含みます（`latenciesIncludeHumanReaction: true`）。
 - `measurementValidated`: 常に `false`（カメラ推定は未検証）
 - `cameraFramesSaved`: 常に `false`
 - 対応するCSV / イベントファイル名、`eventCount`、`events` 配列

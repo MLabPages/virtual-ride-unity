@@ -16,6 +16,8 @@ namespace VirtualRide.Core
 
         public const float MinimumFixedVideoSpeedKph = 5f;
         public const float MaximumFixedVideoSpeedKph = 35f;
+        public const float DisplayAccelerationKphPerSecond = 9f;
+        public const float DisplayDecelerationKphPerSecond = 12f;
         private const float BlockedActionMessageSeconds = 3f;
 
         private RideRoute _route;
@@ -23,13 +25,17 @@ namespace VirtualRide.Core
         private RideSession _session;
         private KeyboardRideInput _keyboardInput;
         private CameraCadenceInput _cameraInput;
+        private BluetoothCadenceInput _bluetoothInput;
+        private IRideInputSource _inputBeforeBluetooth;
         private ResearchSessionRecorder _researchRecorder;
+        private ResponseTestRunner _responseTest;
         private IRideInputSource _activeInput;
         private IRideInputSource _externalInput;
         private float _displaySpeed;
         private bool _paused;
         private bool _helpVisible = true;
         private bool _researchPanelVisible;
+        private bool _bluetoothPanelVisible;
         private bool _minimalHud;
         private VideoSpeedMode _videoSpeedMode = VideoSpeedMode.PedalLinked;
         private float _fixedVideoSpeedKph = 15f;
@@ -42,9 +48,13 @@ namespace VirtualRide.Core
         public RideRoute Route => _route;
         public RideSession Session => _session;
         public CameraCadenceInput CameraInput => _cameraInput;
+        public BluetoothCadenceInput BluetoothInput => _bluetoothInput;
         public KeyboardRideInput KeyboardInput => _keyboardInput;
         public ResearchSessionRecorder ResearchRecorder => _researchRecorder;
+        public ResponseTestRunner ResponseTest => _responseTest;
         public IRideInputSource ActiveInput => _activeInput;
+        public bool ActiveInputIsCamera => ReferenceEquals(_activeInput, _cameraInput);
+        public bool ActiveInputIsBluetooth => ReferenceEquals(_activeInput, _bluetoothInput);
         public RideInputSample ActiveSample => _activeInput != null
             ? _activeInput.Current
             : new RideInputSample(0f, -1f, 0f, RideInputState.Offline, "入力がありません");
@@ -55,6 +65,7 @@ namespace VirtualRide.Core
         public bool IsPaused => _paused;
         public bool HelpVisible => _helpVisible;
         public bool ResearchPanelVisible => _researchPanelVisible;
+        public bool BluetoothPanelVisible => _bluetoothPanelVisible;
         public bool WindEnabled => _rideController != null && _rideController.WindEnabled;
         public bool ComfortMode => _rideController != null && _rideController.ComfortMode;
         public bool MinimalHud => _minimalHud;
@@ -62,7 +73,8 @@ namespace VirtualRide.Core
         public bool IsVideoSpeedFixed => _videoSpeedMode == VideoSpeedMode.Fixed;
         public float FixedVideoSpeedKph => _fixedVideoSpeedKph;
         public bool PedalPreviewVisible => _pedalPreviewVisible;
-        public bool KeyboardControlsBlocked => _helpVisible || _researchPanelVisible;
+        public bool KeyboardControlsBlocked => _helpVisible || _researchPanelVisible || _bluetoothPanelVisible ||
+            (_responseTest != null && (_responseTest.IsRunning || _responseTest.HasResults));
         public string InputModeName => _activeInput != null ? _activeInput.DisplayName : "入力なし";
         public bool IsInputLocked => _researchRecorder != null && _researchRecorder.IsRecording;
         public bool ActiveInputIsUnvalidatedMeasurement =>
@@ -95,9 +107,11 @@ namespace VirtualRide.Core
             GameObject inputObject = new GameObject("Ride Inputs");
             _keyboardInput = inputObject.AddComponent<KeyboardRideInput>();
             _cameraInput = inputObject.AddComponent<CameraCadenceInput>();
+            _bluetoothInput = inputObject.AddComponent<BluetoothCadenceInput>();
             SetInput(_keyboardInput);
 
             gameObject.AddComponent<RideHud>();
+            _responseTest = gameObject.AddComponent<ResponseTestRunner>();
             if (VirtualRideSmokeTest.IsRequested)
             {
                 gameObject.AddComponent<VirtualRideSmokeTest>();
@@ -109,7 +123,8 @@ namespace VirtualRide.Core
             HandleKeyboardShortcuts();
             float unscaledDeltaTime = Time.unscaledDeltaTime;
             _keyboardInput.ControlsEnabled = !KeyboardControlsBlocked;
-            _activeInput?.Tick(unscaledDeltaTime);
+            _bluetoothInput?.Tick(unscaledDeltaTime);
+            if (!ReferenceEquals(_activeInput, _bluetoothInput)) _activeInput?.Tick(unscaledDeltaTime);
 
             RideInputSample sample = ActiveSample;
             bool validInput = !float.IsNaN(sample.SpeedKph) && !float.IsInfinity(sample.SpeedKph)
@@ -121,7 +136,7 @@ namespace VirtualRide.Core
                 : Mathf.Clamp(sample.SpeedKph, 0f, 45f);
             float step = _researchRecorder.IsRecording && _researchRecorder.HasTrialDuration
                 ? Mathf.Min(unscaledDeltaTime, _researchRecorder.RemainingTrialSeconds) : unscaledDeltaTime;
-            float changeRate = targetSpeed > _displaySpeed ? 5.5f : 7.5f;
+            float changeRate = targetSpeed > _displaySpeed ? DisplayAccelerationKphPerSecond : DisplayDecelerationKphPerSecond;
             _displaySpeed = _paused ? 0f : Mathf.MoveTowards(_displaySpeed, targetSpeed, changeRate * step);
             if (_displaySpeed < 0.05f)
             {
@@ -156,7 +171,7 @@ namespace VirtualRide.Core
         }
 
         /// <summary>
-        /// Entry point for a future Bluetooth or USB cadence sensor adapter.
+        /// Entry point for a Bluetooth or USB cadence sensor adapter.
         /// The adapter remains owned by its integration layer; this app only activates it.
         /// </summary>
         public void AttachExternalInput(IRideInputSource source)
@@ -173,6 +188,72 @@ namespace VirtualRide.Core
 
             _externalInput = source;
             SetInput(_externalInput);
+        }
+
+        public bool TryBeginBluetoothScan()
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中はBluetoothセンサーを検索できません。");
+                return false;
+            }
+
+            bool started = _bluetoothInput.BeginScan();
+            if (!started && !string.IsNullOrEmpty(_bluetoothInput.Error))
+            {
+                NotifyActionBlocked(_bluetoothInput.Error);
+            }
+            return started;
+        }
+
+        public bool TryConnectBluetoothInput(string address)
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は入力方式を変更できません。");
+                return false;
+            }
+
+            if (!ReferenceEquals(_activeInput, _bluetoothInput))
+            {
+                _inputBeforeBluetooth = _activeInput;
+            }
+
+            if (!TrySetInput(_bluetoothInput)) return false;
+            if (_bluetoothInput.IsConnected &&
+                string.Equals(_bluetoothInput.SelectedAddress, address, StringComparison.OrdinalIgnoreCase))
+            {
+                _paused = false;
+                return true;
+            }
+
+            if (!_bluetoothInput.Connect(address))
+            {
+                TrySetInput(_inputBeforeBluetooth ?? _keyboardInput);
+                NotifyActionBlocked(_bluetoothInput.Error);
+                return false;
+            }
+
+            _paused = false;
+            return true;
+        }
+
+        public bool TryDisconnectBluetoothInput()
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は入力方式を変更できません。");
+                return false;
+            }
+
+            if (ReferenceEquals(_activeInput, _bluetoothInput))
+            {
+                IRideInputSource returnInput = _inputBeforeBluetooth ?? _keyboardInput;
+                if (!TrySetInput(returnInput)) return false;
+            }
+
+            _bluetoothInput.Disconnect();
+            return true;
         }
 
         public void TogglePause()
@@ -210,8 +291,39 @@ namespace VirtualRide.Core
             _researchPanelVisible = false;
         }
 
+        public void ShowBluetoothPanel()
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中はBluetoothセンサーを検索できません。");
+                return;
+            }
+
+            _helpVisible = false;
+            _researchPanelVisible = false;
+            _bluetoothPanelVisible = true;
+            TryBeginBluetoothScan();
+        }
+
+        public void HideBluetoothPanel()
+        {
+            _bluetoothPanelVisible = false;
+        }
+
         public bool BeginResearchSession(string participantId, string condition, float trialDurationSeconds = 0f)
         {
+            if (ReferenceEquals(_activeInput, _bluetoothInput) && !_bluetoothInput.IsConnected)
+            {
+                NotifyActionBlocked("Bluetoothセンサーが未接続です。接続後に記録を開始してください。");
+                return false;
+            }
+
+            if (_responseTest.IsRunning)
+            {
+                NotifyActionBlocked("反応テスト中は記録を開始できません。");
+                return false;
+            }
+
             if (!_researchRecorder.Start(participantId, condition, this, trialDurationSeconds)) return false;
             _session.Reset();
             _rideController.ResetRoute();
@@ -296,6 +408,38 @@ namespace VirtualRide.Core
         {
             if (IsInputLocked) { NotifyActionBlocked("記録中はペダル映像の表示を変更できません。"); return; }
             _pedalPreviewVisible = !_pedalPreviewVisible;
+        }
+
+        /// <summary>
+        /// Starts the cue-based response test that measures start/stop delay and cadence error
+        /// of the camera estimate. It never runs during a recorded session.
+        /// </summary>
+        public bool TryStartResponseTest()
+        {
+            if (IsInputLocked)
+            {
+                NotifyActionBlocked("記録中は反応テストを行えません。");
+                return false;
+            }
+
+            if (!ReferenceEquals(_activeInput, _cameraInput))
+            {
+                NotifyActionBlocked("反応テストはカメラ計測で行います。先に「カメラ計測」を選んでください。");
+                return false;
+            }
+
+            if (IsVideoSpeedFixed)
+            {
+                NotifyActionBlocked("反応テストは「映像: ペダル連動」で行います。実験設定で切り替えてください。");
+                return false;
+            }
+
+            _paused = false;
+            _helpVisible = false;
+            _researchPanelVisible = false;
+            _blockedActionMessage = string.Empty;
+            _responseTest.Begin();
+            return true;
         }
 
         private void StopMotion()
@@ -462,13 +606,16 @@ namespace VirtualRide.Core
         }
 
         private static readonly KeyCode[] ShortcutKeys = { KeyCode.Escape, KeyCode.Space, KeyCode.C,
-            KeyCode.K, KeyCode.H, KeyCode.F, KeyCode.R, KeyCode.Tab, KeyCode.F7, KeyCode.F8, KeyCode.F9 };
+            KeyCode.K, KeyCode.H, KeyCode.F, KeyCode.R, KeyCode.Tab, KeyCode.F6, KeyCode.F7, KeyCode.F8, KeyCode.F9 };
 
         internal void HandleShortcut(KeyCode key)
         {
             if (key == KeyCode.Escape)
             {
-                if (_researchPanelVisible) HideResearchPanel();
+                if (_responseTest.IsRunning) _responseTest.Cancel();
+                else if (_responseTest.HasResults) _responseTest.Dismiss();
+                else if (_bluetoothPanelVisible) HideBluetoothPanel();
+                else if (_researchPanelVisible) HideResearchPanel();
                 else ToggleHelp();
                 return;
             }
@@ -484,6 +631,7 @@ namespace VirtualRide.Core
                 case KeyCode.F: ToggleFullscreen(); break;
                 case KeyCode.R: ResetSession(); break;
                 case KeyCode.Tab: ToggleMinimalHud(); break;
+                case KeyCode.F6: TryStartResponseTest(); break;
                 case KeyCode.F7: ToggleResearchPanel(); break;
             }
         }
@@ -494,6 +642,7 @@ namespace VirtualRide.Core
             {
                 _researchRecorder?.Stop(this, ResearchSessionRecorder.StopReasonApplicationClosed);
                 _activeInput?.Deactivate();
+                _bluetoothInput?.Shutdown();
                 Instance = null;
             }
         }

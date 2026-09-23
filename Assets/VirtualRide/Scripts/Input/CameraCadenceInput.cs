@@ -22,22 +22,6 @@ namespace VirtualRide.Input
             Center
         }
 
-        private struct MotionSample
-        {
-            public float Time;
-            public float Motion;
-            public float Focus;
-            public float Globalness;
-        }
-
-        private struct Candidate
-        {
-            public float Rpm;
-            public float Speed;
-            public float Time;
-            public int Seen;
-        }
-
         private const int RequestedWidth = 320;
         private const int RequestedHeight = 240;
         private const int RequestedFps = 30;
@@ -45,26 +29,19 @@ namespace VirtualRide.Input
         private const int AnalysisHeight = 36;
         private const int GridColumns = 8;
         private const int GridRows = 6;
-        private const float SampleInterval = 1f / 20f;
-        private const float AnalysisInterval = 0.4f;
-        private const float HistorySeconds = 6f;
-        private const float MinimumRpm = 35f;
-        private const float MaximumRpm = 115f;
         private const string CameraPreferenceKey = "VirtualRide.CameraDeviceName";
         private const string RegionPreferenceKey = "VirtualRide.CameraRegion";
         private const float DarkFrameBrightness = 10f;
         private const float DarkFrameSeconds = 2f;
         private const float StalledFrameSeconds = 3f;
 
-        private readonly List<MotionSample> _motionSamples = new List<MotionSample>(140);
+        private readonly CadenceEstimator _estimator = new CadenceEstimator();
         private readonly List<string> _deviceNames = new List<string>();
 
         private WebCamTexture _camera;
         private Color32[] _cameraPixels;
         private float[] _previousGray;
-        private float _nextSampleAt;
         private float _nextAnalysisAt;
-        private float _lastGoodAt = -100f;
         private float _targetSpeed;
         private float _currentRpm = -1f;
         private float _confidence;
@@ -72,7 +49,6 @@ namespace VirtualRide.Input
         private bool _isActive;
         private string _status = "カメラは停止しています";
         private RideInputState _state = RideInputState.Offline;
-        private Candidate? _candidate;
         private Coroutine _startRoutine;
         private string _selectedDeviceName = string.Empty;
         private bool _devicesLoaded;
@@ -224,11 +200,7 @@ namespace VirtualRide.Input
             if (_camera != null && _camera.isPlaying && _camera.didUpdateThisFrame)
             {
                 _lastFrameAt = now;
-                if (now >= _nextSampleAt)
-                {
-                    _nextSampleAt = now + SampleInterval;
-                    SampleMotion(now);
-                }
+                SampleMotion(now);
             }
 
             if (_streaming)
@@ -236,28 +208,17 @@ namespace VirtualRide.Input
                 UpdateFrameHealth(now);
             }
 
-            if (!_frameProblem && _motionSamples.Count >= 50 && now >= _nextAnalysisAt)
+            if (_streaming && !_frameProblem && now >= _nextAnalysisAt)
             {
-                _nextAnalysisAt = now + AnalysisInterval;
-                AnalyzeCadence(now);
-            }
-
-            if (now - _lastGoodAt > 1.5f)
-            {
-                _targetSpeed = Mathf.MoveTowards(_targetSpeed, 0f, 5.5f * unscaledDeltaTime);
-                if (_targetSpeed < 0.4f)
-                {
-                    _targetSpeed = 0f;
-                    _currentRpm = -1f;
-                    _confidence = 0f;
-                }
+                _nextAnalysisAt = now + CadenceEstimator.AnalysisInterval;
+                ApplyEstimate(now);
             }
         }
 
         public void ToggleLegView()
         {
             BothLegsVisible = !BothLegsVisible;
-            ResetRhythmCandidate();
+            ClearCadence();
         }
 
         public void CycleSensitivity()
@@ -267,7 +228,7 @@ namespace VirtualRide.Input
                 : Sensitivity == DetectionSensitivity.Standard
                     ? DetectionSensitivity.Low
                     : DetectionSensitivity.High;
-            ResetRhythmCandidate();
+            ClearCadence();
         }
 
         public void CycleRegion()
@@ -275,9 +236,9 @@ namespace VirtualRide.Input
             Region = (MeasurementRegion)(((int)Region + 1) % System.Enum.GetValues(typeof(MeasurementRegion)).Length);
             PlayerPrefs.SetInt(RegionPreferenceKey, (int)Region);
             PlayerPrefs.Save();
-            _motionSamples.Clear();
+            _estimator.Clear();
             _previousGray = null;
-            ResetRhythmCandidate();
+            ClearCadence();
         }
 
         /// <summary>
@@ -418,8 +379,7 @@ namespace VirtualRide.Input
                 yield break;
             }
 
-            _nextSampleAt = Time.realtimeSinceStartup;
-            _nextAnalysisAt = Time.realtimeSinceStartup + 3f;
+            _nextAnalysisAt = Time.realtimeSinceStartup;
             _lastFrameAt = Time.realtimeSinceStartup;
             _streaming = true;
             SetStatus(RideInputState.Searching, "ペダルの動きを探しています…");
@@ -454,9 +414,7 @@ namespace VirtualRide.Input
                 if (!_frameProblem)
                 {
                     _frameProblem = true;
-                    ResetRhythmCandidate();
-                    _currentRpm = -1f;
-                    _confidence = 0f;
+                    ClearCadence();
                 }
 
                 SetStatus(RideInputState.Error, problem);
@@ -466,9 +424,9 @@ namespace VirtualRide.Input
             if (_frameProblem)
             {
                 _frameProblem = false;
-                _motionSamples.Clear();
+                _estimator.Clear();
                 _previousGray = null;
-                _nextAnalysisAt = now + 3f;
+                _nextAnalysisAt = now;
                 SetStatus(RideInputState.Searching, "ペダルの動きを探しています…");
             }
         }
@@ -588,17 +546,8 @@ namespace VirtualRide.Input
                     }
                 }
 
-                _motionSamples.Add(new MotionSample
-                {
-                    Time = now,
-                    Motion = motion,
-                    Focus = maximumCell / Mathf.Max(1f, averageCell),
-                    Globalness = activeCells / (float)cellSums.Length
-                });
-                while (_motionSamples.Count > 0 && now - _motionSamples[0].Time > HistorySeconds)
-                {
-                    _motionSamples.RemoveAt(0);
-                }
+                _estimator.AddSample(now, motion, maximumCell / Mathf.Max(1f, averageCell),
+                    activeCells / (float)cellSums.Length);
 
                 _motionLevel = Mathf.Lerp(_motionLevel, Mathf.Clamp01(motion / 8f), 0.25f);
             }
@@ -606,145 +555,55 @@ namespace VirtualRide.Input
             _previousGray = gray;
         }
 
-        private void AnalyzeCadence(float now)
+        private void ApplyEstimate(float now)
         {
-            GetThresholds(out float minimumMotion, out float minimumCorrelation,
-                out float minimumFocus, out float maximumGlobalness);
-
-            int count = _motionSamples.Count;
-            float mean = 0f;
-            float meanFocus = 0f;
-            float meanGlobalness = 0f;
-            for (int i = 0; i < count; i++)
+            CadenceEstimator.Status status = _estimator.Analyze(now, GetThresholds(), BothLegsVisible);
+            if (_estimator.HasCadence)
             {
-                mean += _motionSamples[i].Motion;
-                meanFocus += _motionSamples[i].Focus;
-                meanGlobalness += _motionSamples[i].Globalness;
-            }
-
-            mean /= count;
-            meanFocus /= count;
-            meanGlobalness /= count;
-
-            if (mean < minimumMotion)
-            {
-                SetStatus(RideInputState.Searching, "動きが見えません。ペダルが映る位置を確認してください");
-                ResetRhythmCandidate();
+                _currentRpm = _estimator.Rpm;
+                _targetSpeed = _currentRpm * MetersPerRevolution * 60f / 1000f;
+                _confidence = _estimator.Confidence;
+                SetStatus(RideInputState.Detected, $"検出中: {Mathf.RoundToInt(_currentRpm)} rpm");
                 return;
             }
 
-            if (meanFocus < minimumFocus || meanGlobalness > maximumGlobalness)
-            {
-                SetStatus(RideInputState.Searching, "画面全体が揺れています。カメラを固定してください");
-                ResetRhythmCandidate();
-                return;
-            }
-
-            float[] centered = new float[count];
-            for (int i = 0; i < count; i++)
-            {
-                centered[i] = _motionSamples[i].Motion - mean;
-            }
-
-            const float effectiveSampleRate = 1f / SampleInterval;
-            int minimumLag = Mathf.RoundToInt(0.25f * effectiveSampleRate);
-            int maximumLag = Mathf.Min(Mathf.RoundToInt(1.6f * effectiveSampleRate), count - 10);
-            int bestLag = -1;
-            float bestCorrelation = -1f;
-
-            for (int lag = minimumLag; lag <= maximumLag; lag++)
-            {
-                float product = 0f;
-                float energyA = 0f;
-                float energyB = 0f;
-                for (int i = 0; i < count - lag; i++)
-                {
-                    float a = centered[i];
-                    float b = centered[i + lag];
-                    product += a * b;
-                    energyA += a * a;
-                    energyB += b * b;
-                }
-
-                float denominator = Mathf.Sqrt(energyA * energyB);
-                float correlation = denominator > 0.0001f ? product / denominator : 0f;
-                if (correlation > bestCorrelation)
-                {
-                    bestCorrelation = correlation;
-                    bestLag = lag;
-                }
-            }
-
-            if (bestLag < 0 || bestCorrelation < minimumCorrelation)
-            {
-                SetStatus(RideInputState.Searching, "リズムを探しています。一定の速さで漕いでください");
-                ResetRhythmCandidate();
-                return;
-            }
-
-            float detectedPeriod = bestLag / effectiveSampleRate;
-            float revolutionPeriod = BothLegsVisible ? detectedPeriod * 2f : detectedPeriod;
-            float rpm = 60f / revolutionPeriod;
-            if (rpm < MinimumRpm || rpm > MaximumRpm)
-            {
-                SetStatus(RideInputState.Searching, "ペダルらしいリズムを探しています…");
-                ResetRhythmCandidate();
-                return;
-            }
-
-            float speed = rpm * MetersPerRevolution * 60f / 1000f;
-            if (!_candidate.HasValue || now - _candidate.Value.Time > 1.8f ||
-                Mathf.Abs(rpm - _candidate.Value.Rpm) > Mathf.Max(10f, _candidate.Value.Rpm * 0.18f))
-            {
-                _candidate = new Candidate { Rpm = rpm, Speed = speed, Time = now, Seen = 1 };
-                SetStatus(RideInputState.Searching, "リズムを確認しています…");
-                return;
-            }
-
-            Candidate candidate = _candidate.Value;
-            candidate.Rpm = Mathf.Lerp(candidate.Rpm, rpm, 0.35f);
-            candidate.Speed = Mathf.Lerp(candidate.Speed, speed, 0.35f);
-            candidate.Time = now;
-            candidate.Seen++;
-            _candidate = candidate;
-            if (candidate.Seen < 2)
-            {
-                return;
-            }
-
-            _currentRpm = candidate.Rpm;
-            _targetSpeed = Mathf.MoveTowards(_targetSpeed, candidate.Speed, 3.2f);
-            _confidence = Mathf.InverseLerp(minimumCorrelation, 0.85f, bestCorrelation);
-            _lastGoodAt = now;
-            SetStatus(RideInputState.Detected, $"検出中: {Mathf.RoundToInt(_currentRpm)} rpm");
+            _currentRpm = -1f;
+            _targetSpeed = 0f;
+            _confidence = 0f;
+            SetStatus(RideInputState.Searching, StatusMessage(status));
         }
 
-        private void GetThresholds(
-            out float minimumMotion,
-            out float minimumCorrelation,
-            out float minimumFocus,
-            out float maximumGlobalness)
+        private static string StatusMessage(CadenceEstimator.Status status)
+        {
+            switch (status)
+            {
+                case CadenceEstimator.Status.NoMotion:
+                    return "動きが見えません。ペダルが映る位置を確認してください";
+                case CadenceEstimator.Status.Stopped:
+                    return "ペダルが止まっています";
+                case CadenceEstimator.Status.Shaking:
+                    return "画面全体が揺れています。カメラを固定してください";
+                case CadenceEstimator.Status.NoRhythm:
+                    return "リズムを探しています。一定の速さで漕いでください";
+                case CadenceEstimator.Status.OutOfRange:
+                    return "ペダルらしいリズムを探しています…";
+                case CadenceEstimator.Status.Confirming:
+                    return "リズムを確認しています…";
+                default:
+                    return "ペダルの動きを探しています…";
+            }
+        }
+
+        private CadenceEstimator.Thresholds GetThresholds()
         {
             switch (Sensitivity)
             {
                 case DetectionSensitivity.High:
-                    minimumMotion = 1.0f;
-                    minimumCorrelation = 0.30f;
-                    minimumFocus = 1.35f;
-                    maximumGlobalness = 0.86f;
-                    break;
+                    return new CadenceEstimator.Thresholds(1.0f, 0.30f, 1.35f, 0.86f);
                 case DetectionSensitivity.Low:
-                    minimumMotion = 2.8f;
-                    minimumCorrelation = 0.48f;
-                    minimumFocus = 1.8f;
-                    maximumGlobalness = 0.68f;
-                    break;
+                    return new CadenceEstimator.Thresholds(2.8f, 0.48f, 1.8f, 0.68f);
                 default:
-                    minimumMotion = 1.8f;
-                    minimumCorrelation = 0.38f;
-                    minimumFocus = 1.55f;
-                    maximumGlobalness = 0.78f;
-                    break;
+                    return new CadenceEstimator.Thresholds(1.8f, 0.38f, 1.55f, 0.78f);
             }
         }
 
@@ -754,22 +613,23 @@ namespace VirtualRide.Input
             _status = status;
         }
 
-        private void ResetRhythmCandidate()
+        private void ClearCadence()
         {
-            _candidate = null;
+            _estimator.LoseCadence();
+            _currentRpm = -1f;
+            _targetSpeed = 0f;
+            _confidence = 0f;
         }
 
         private void ResetDetection()
         {
-            _motionSamples.Clear();
+            _estimator.Clear();
             _previousGray = null;
             _cameraPixels = null;
             _targetSpeed = 0f;
             _currentRpm = -1f;
             _confidence = 0f;
             _motionLevel = 0f;
-            _lastGoodAt = -100f;
-            _candidate = null;
             _streaming = false;
             _frameProblem = false;
             _frameBrightness = -1f;

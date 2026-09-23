@@ -2,34 +2,39 @@
 
 ## 結論
 
-専用センサーを購入した後も、走行コースや画面表示を作り直す必要はありません。センサー値を `IRideInputSource` 形式へ変換する小さな接続クラスを追加します。
+Windows版にBluetooth LEのCSC（Cycling Speed and Cadence）接続を追加しました。画面の「BLEセンサー」から機器を検索し、一覧から選んで接続します。センサーがBluetooth SIG標準のCSCサービスを公開していれば、メーカー固有のSDKなしで読み取れます。
 
 ## 入力の契約
 
-`Assets/VirtualRide/Scripts/Input/IRideInputSource.cs` が、走行側と計測側の境界です。走行側が受け取る主な値は次の4つです。
+`Assets/VirtualRide/Scripts/Input/IRideInputSource.cs` が、走行側と計測側の境界です。Bluetooth入力は `BluetoothCadenceInput` が値を変換し、走行側は同じ入力契約を使います。
 
 - `SpeedKph`: 走行に使う速度（km/h）
 - `CadenceRpm`: ペダル回転数（rpm）
 - `Confidence`: 0〜1の計測信頼度
 - `Status`: 参加者や実験者へ見せる状態文
-- `IsUnvalidatedMeasurement`: 基準センサーとの妥当性確認前なら true（カメラ推定は true、キーボードは false）
+- `IsUnvalidatedMeasurement`: 基準機器との妥当性確認前なら true（カメラとBluetoothセンサーは true、キーボードは false）
 
 センサー固有の通信処理や値の変換は、この境界より入力側に閉じ込めます。
 
-## 接続手順
+## Windows版の接続手順
 
-1. 購入するセンサーと、PCで値を受け取る方法を決めます。
-2. `IRideInputSource` を実装するクラスを追加します。
-3. センサーの受信値から速度と回転数を作り、`Current` で返します。
-4. 起動後、実験記録を始める前に `VirtualRideApp.AttachExternalInput(source)` を呼びます。記録中は入力方式を変更できません。
-5. カメラ、センサー、キーボードで同じ速度を与え、仮想空間内の移動が一致するか確認します。
+1. WindowsのBluetoothをオンにし、センサーをクランクに取り付けます。
+2. センサーを数回回して起動します。
+3. アプリ下部の「BLEセンサー」→「再検索」を押します。
+4. 一覧からBK9Cを選び、「接続」を押します。
+5. rpmが表示されたことを確認してから実験記録を開始します。記録中は入力方式を切り替えられません。
 
-## 購入前に確認すること
+UnityのWindowsビルドには `Assets/StreamingAssets/Bluetooth/VirtualRideBleBridge.exe` が同梱されます。この小さな補助プロセスがWindowsのBLE APIを使い、Unityとは標準入力・出力で通信します。BLEの処理と値はPC内だけで扱い、Bluetoothアドレスは保存しません。
 
-- Windows PCへ値を送れること
-- 回転数または速度を継続的に取得できること
-- メーカー専用アプリだけでなく、外部アプリから値を読めること
-- 通信周期と欠損時の挙動を確認できること
-- 実験で必要な精度と再現性が仕様上または実測で満たせること
+補助プログラムのソースは `Tools/VirtualRideBleBridge/Program.cs` にあり、変更後は `Tools/VirtualRideBleBridge/Build.ps1` を実行して同梱ファイルを再生成します。
 
-機種を決める段階では、候補製品の通信方式を確認してから実装方法を選びます。現時点では特定メーカーへ依存するコードを入れていません。
+## 対応するデータ
+
+- CSCサービス: `0x1816`
+- CSC Measurement: `0x2A5B`
+- クランク累積回転数と最後のクランクイベント時刻からrpmを計算します。イベント時刻は1/1024秒単位です。
+- 走行速度は既存の換算と合わせ、`rpm × 4.2 m/回転 × 60 ÷ 1000` km/h とします。
+- 通知が2.5秒途絶えた場合、表示・走行入力を0 rpmにします。
+- 検索一覧には周辺BLE機器も表示されます。CSCサービスがない機器を選ぶと接続エラーになります。
+
+BK9Cの実機がまだないため、スキャン、接続、通知周期、rpm値、切断時の挙動は未確認です。最初の接続時にWindowsのBluetooth許可やアダプター状態も確認してください。実験前にカメラ入力と同時記録し、基準値との一致と反応時間を測ってください。

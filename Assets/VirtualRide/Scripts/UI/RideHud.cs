@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 using VirtualRide.Core;
@@ -20,6 +21,7 @@ namespace VirtualRide.UI
         private GUIStyle _dangerButtonStyle;
         private GUIStyle _statusStyle;
         private GUIStyle _cameraNameStyle;
+        private GUIStyle _cueStyle;
         private GUIStyle _textFieldStyle;
         private Texture2D _whiteTexture;
         private Texture2D _roundedTexture;
@@ -52,8 +54,10 @@ namespace VirtualRide.UI
             float width = Screen.width / scale;
             float height = Screen.height / scale;
 
-            bool modal = _app.HelpVisible || _app.ResearchPanelVisible;
-            GUI.enabled = !modal;
+            ResponseTestRunner responseTest = _app.ResponseTest;
+            bool modal = _app.HelpVisible || _app.ResearchPanelVisible || responseTest.HasResults ||
+                _app.BluetoothPanelVisible;
+            GUI.enabled = !modal && !responseTest.IsRunning;
             if (!_app.MinimalHud)
             {
                 DrawTopHud(width);
@@ -84,6 +88,21 @@ namespace VirtualRide.UI
                 DrawResearchPanel(width, height);
             }
 
+            if (_app.BluetoothPanelVisible)
+            {
+                DrawBluetoothPanel(width, height);
+            }
+
+            if (responseTest.IsRunning)
+            {
+                DrawResponseTestCue(width, responseTest);
+            }
+
+            if (responseTest.HasResults)
+            {
+                DrawResponseTestResults(width, height, responseTest);
+            }
+
             if (!modal) DrawResearchBadge(width);
             DrawBlockedActionBanner(width);
             if (_app.MinimalHud && !modal &&
@@ -99,7 +118,7 @@ namespace VirtualRide.UI
             {
                 Rect note = new Rect(24, 24, 284, 36);
                 DrawPanel(note, new Color(.025f,.055f,.065f,.78f));
-                GUI.Label(new Rect(34,30,264,26), "カメラ値は未検証の推定です", _warningStyle);
+                GUI.Label(new Rect(34,30,264,26), ValidationNotice(), _warningStyle);
             }
             Rect panel = new Rect((width - 680f) * .5f, height - 60f, 680f, 42f);
             DrawPanel(panel, new Color(.025f, .055f, .065f, .72f));
@@ -120,7 +139,7 @@ namespace VirtualRide.UI
 
             RideInputSample sample = _app.ActiveSample;
             string cadence = sample.HasCadence ? Mathf.RoundToInt(sample.CadenceRpm) + " rpm" : "-- rpm";
-            if (unvalidated)
+            if (_app.ActiveInputIsCamera)
             {
                 cadence = "推定 " + cadence;
             }
@@ -134,7 +153,7 @@ namespace VirtualRide.UI
 
             if (unvalidated)
             {
-                GUI.Label(new Rect(52f, 164f, 410f, 24f), "カメラ値は未検証の推定です", _warningStyle);
+                GUI.Label(new Rect(52f, 164f, 410f, 24f), ValidationNotice(), _warningStyle);
             }
         }
 
@@ -175,9 +194,23 @@ namespace VirtualRide.UI
                     : new Color(0.06f, 0.16f, 0.18f, 0.88f);
 
             float statusWidth = Mathf.Min(650f, width - 56f);
-            Rect statusRect = new Rect((width - statusWidth) * 0.5f, height - 126f, statusWidth, 38f);
+            int charactersPerLine = Mathf.Max(1, Mathf.FloorToInt(statusWidth / _statusStyle.fontSize));
+            string statusText = sample.Status ?? string.Empty;
+            float lineCount = Mathf.Ceil(statusText.Length / (float)charactersPerLine);
+            float statusHeight = Mathf.Clamp(lineCount * (_statusStyle.fontSize + 2f) + 8f, 38f, 70f);
+            Rect statusRect = new Rect((width - statusWidth) * 0.5f,
+                height - statusHeight - 90f, statusWidth, statusHeight);
             DrawPanel(statusRect, statusColor);
-            GUI.Label(statusRect, sample.Status, _statusStyle);
+            GUI.Label(statusRect, statusText, _statusStyle);
+        }
+
+        private string ValidationNotice()
+        {
+            if (_app.ActiveInputIsBluetooth)
+            {
+                return "Bluetooth計測: 基準機器と未照合";
+            }
+            return "カメラ計測: 基準センサーと未照合";
         }
 
         private void DrawControls(float width, float height)
@@ -244,6 +277,92 @@ namespace VirtualRide.UI
             {
                 _app.ToggleResearchPanel();
             }
+
+            x += 134f;
+            if (GUI.Button(new Rect(x, y, 104f, 38f), "BLEセンサー", _buttonStyle))
+            {
+                _app.ShowBluetoothPanel();
+            }
+        }
+
+        private void DrawBluetoothPanel(float width, float height)
+        {
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.66f);
+            GUI.DrawTexture(new Rect(0f, 0f, width, height), _whiteTexture);
+            GUI.color = previousColor;
+
+            float cardWidth = Mathf.Min(760f, width - 48f);
+            float cardHeight = 470f;
+            Rect panel = new Rect((width - cardWidth) * 0.5f, (height - cardHeight) * 0.5f,
+                cardWidth, cardHeight);
+            DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.98f));
+            GUI.Label(new Rect(panel.x + 28f, panel.y + 20f, cardWidth - 56f, 40f),
+                "Bluetoothケイデンスセンサー", _headingStyle);
+            GUI.Label(new Rect(panel.x + 28f, panel.y + 62f, cardWidth - 56f, 34f),
+                _app.BluetoothInput.Status, _bodyStyle);
+            GUI.Label(new Rect(panel.x + 28f, panel.y + 98f, cardWidth - 56f, 42f),
+                "BK9Cをペダルに取り付けて動かし、一覧から選んでください。検索は約12秒です。",
+                _smallStyle);
+
+            List<BluetoothCadenceDevice> devices = _app.BluetoothInput.Devices;
+            float rowY = panel.y + 150f;
+            float rowHeight = 45f;
+            int rows = Mathf.Min(devices.Count, 5);
+            for (int i = 0; i < rows; i++)
+            {
+                BluetoothCadenceDevice device = devices[i];
+                Rect row = new Rect(panel.x + 24f, rowY + i * rowHeight, cardWidth - 48f, rowHeight - 3f);
+                DrawPanel(row, new Color(0.08f, 0.15f, 0.17f, 0.94f));
+                string shortAddress = device.Address.Length > 4
+                    ? device.Address.Substring(device.Address.Length - 4)
+                    : device.Address;
+                GUI.Label(new Rect(row.x + 12f, row.y + 4f, row.width - 150f, 34f),
+                    device.Name + "  · " + shortAddress + "  " + device.SignalStrength + " dBm", _bodyStyle);
+                if (GUI.Button(new Rect(row.xMax - 112f, row.y + 3f, 100f, 34f), "接続", _primaryButtonStyle))
+                {
+                    _app.TryConnectBluetoothInput(device.Address);
+                }
+            }
+
+            if (rows == 0)
+            {
+                string emptyMessage = _app.BluetoothInput.IsScanning
+                    ? "検索中です。センサーを回して起動してください。"
+                    : "近くのセンサーがここに表示されます。";
+                GUI.Label(new Rect(panel.x + 30f, rowY + 20f, cardWidth - 60f, 36f), emptyMessage, _smallStyle);
+            }
+
+            if (_app.BluetoothInput.IsConnected)
+            {
+                GUI.Label(new Rect(panel.x + 28f, panel.y + 390f, cardWidth - 56f, 30f),
+                    "接続中: " + _app.BluetoothInput.ConnectedDeviceName, _bodyStyle);
+            }
+
+            float buttonY = panel.y + cardHeight - 56f;
+            if (GUI.Button(new Rect(panel.x + 24f, buttonY, 132f, 38f), "再検索", _buttonStyle))
+            {
+                _app.TryBeginBluetoothScan();
+            }
+            if (GUI.Button(new Rect(panel.x + 166f, buttonY, 126f, 38f), "カメラに戻る", _buttonStyle))
+            {
+                _app.UseCameraInput();
+                _app.HideBluetoothPanel();
+            }
+            if (GUI.Button(new Rect(panel.x + 302f, buttonY, 132f, 38f), "キーボード", _buttonStyle))
+            {
+                _app.UseKeyboardInput();
+                _app.HideBluetoothPanel();
+            }
+            if (_app.BluetoothInput.IsConnected && GUI.Button(
+                new Rect(panel.xMax - 260f, buttonY, 126f, 38f), "センサー切断", _buttonStyle))
+            {
+                _app.TryDisconnectBluetoothInput();
+            }
+            if (GUI.Button(new Rect(panel.xMax - 124f, buttonY, 100f, 38f), "閉じる", _buttonStyle))
+            {
+                _app.HideBluetoothPanel();
+            }
         }
 
         private void DrawResearchBadge(float width)
@@ -254,7 +373,9 @@ namespace VirtualRide.UI
                 return;
             }
 
-            float badgeY = !_app.MinimalHud && width < 1520f ? 183f : 24f;
+            float badgeY = !_app.MinimalHud && width < 1520f
+                ? (_app.ActiveInputIsUnvalidatedMeasurement ? 208f : 183f)
+                : 24f;
             Rect badge = new Rect(width * 0.5f - 210f, badgeY, 420f, 40f);
             DrawPanel(badge, new Color(0.78f, 0.16f, 0.13f, 0.94f));
             string label = $"● 実験記録中  {FormatTime(recorder.RecordingElapsedSeconds)}";
@@ -274,9 +395,18 @@ namespace VirtualRide.UI
                 return;
             }
 
-            float y = _app.ResearchPanelVisible || _app.HelpVisible ? 8f
-                : _app.ResearchRecorder.IsRecording && !_app.MinimalHud && width < 1520f ? 232f : 210f;
-            Rect banner = new Rect(width * 0.5f - 300f, y, 600f, 44f);
+            bool modal = _app.ResearchPanelVisible || _app.HelpVisible;
+            float y = modal ? 8f
+                : _app.ResearchRecorder.IsRecording && !_app.MinimalHud && width < 1520f
+                    ? (_app.ActiveInputIsUnvalidatedMeasurement ? 258f : 232f)
+                    : 210f;
+            float bannerWidth = Mathf.Min(600f, width - 56f);
+            int charactersPerLine = Mathf.Max(1, Mathf.FloorToInt(bannerWidth / _statusStyle.fontSize));
+            int lineCount = Mathf.Max(1, Mathf.CeilToInt(
+                _app.BlockedActionMessage.Length / (float)charactersPerLine));
+            float bannerHeight = modal ? 44f
+                : Mathf.Clamp(lineCount * (_statusStyle.fontSize + 2f) + 8f, 44f, 70f);
+            Rect banner = new Rect((width - bannerWidth) * 0.5f, y, bannerWidth, bannerHeight);
             DrawPanel(banner, new Color(0.82f, 0.45f, 0.10f, 0.95f));
             GUI.Label(banner, _app.BlockedActionMessage, _statusStyle);
         }
@@ -372,7 +502,7 @@ namespace VirtualRide.UI
             GUI.Label(new Rect(panel.x + 18f, panel.y + 352f, panel.width - 36f, 20f),
                 "枠内のペダルの動きだけを計測・映像は保存しません", _smallStyle);
             GUI.Label(new Rect(panel.x + 18f, panel.y + 372f, panel.width - 36f, 24f),
-                "回転数・速度は未検証の推定値です", _warningStyle);
+                ValidationNotice(), _warningStyle);
         }
 
         private static Rect FitRect(Rect bounds, float aspect)
@@ -438,7 +568,7 @@ namespace VirtualRide.UI
             GUI.Label(new Rect(card.x + 38f, card.y + 30f, card.width - 76f, 46f),
                 "VIRTUAL RIDE  —  仮想空間サイクリング", _headingStyle);
             GUI.Label(new Rect(card.x + 38f, card.y + 80f, card.width - 76f, 52f),
-                "漕ぐ速さに合わせて、Unityで生成した田園コースを進みます。\nまずはキーボードで体験し、その後カメラ計測へ切り替えられます。", _bodyStyle);
+                "漕ぐ速さに合わせて、Unityで生成した田園コースを進みます。\nキーボード、カメラ、Bluetoothケイデンスセンサーを選べます。", _bodyStyle);
 
             GUI.Label(new Rect(card.x + 38f, card.y + 146f, card.width - 76f, 29f), "すぐ試す", _headingStyle);
             GUI.Label(new Rect(card.x + 38f, card.y + 176f, card.width - 76f, 72f),
@@ -446,10 +576,10 @@ namespace VirtualRide.UI
 
             GUI.Label(new Rect(card.x + 38f, card.y + 258f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
             GUI.Label(new Rect(card.x + 38f, card.y + 288f, card.width - 76f, 120f),
-                "1. USBカメラを、ペダルと足元が横から映るよう固定します\n2. 「カメラ計測を始める」→ 左の ◀ ▶ でカメラを選びます\n3. 「計測範囲」の枠をペダル付近に合わせ、一定ペースで漕ぎます\n4. 検出中と rpm が表示されたら、その速さで進みます", _bodyStyle);
+                "1. USBカメラを使う場合は「カメラ計測」を選び、左の ◀ ▶ で選択します\n2. ケイデンスセンサーは下部の「BLEセンサー」から検索して選びます\n3. カメラは計測範囲を調整し、センサーはペダルを回して起動します\n4. rpm が表示されたら、その速さでコースを進みます", _bodyStyle);
 
             GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 168f, card.width - 76f, 58f),
-                "カメラの回転数・速度は未検証の推定値です。実験記録中は入力方式を切り替えられません。\nカメラ映像はこのPC内だけで計算し、保存も送信もしません。",
+                "カメラ推定・Bluetooth計測とも基準機器との照合前です。実験記録中は入力を切り替えられません。\n入力データはこのPC内で扱います。カメラ映像は保存・送信しません。",
                 _smallStyle);
 
             float buttonY = card.y + cardHeight - 80f;
@@ -612,6 +742,13 @@ namespace VirtualRide.UI
                 else _formMessage = "記録を開始すると保存フォルダを作成します";
             }
 
+            if (!recorder.IsRecording &&
+                GUI.Button(new Rect(card.x + 472f, buttonY, card.width - 630f, 46f), "反応テスト", _buttonStyle))
+            {
+                _formMessage = "";
+                _app.TryStartResponseTest();
+            }
+
             if (GUI.Button(new Rect(card.xMax - 158f, buttonY, 120f, 46f), "閉じる", _buttonStyle))
             {
                 _app.HideResearchPanel();
@@ -662,6 +799,125 @@ namespace VirtualRide.UI
             return _app.IsVideoSpeedFixed
                 ? "一定 " + _app.FixedVideoSpeedKph.ToString("0.0") + " km/h"
                 : "ペダル連動";
+        }
+
+        private void DrawResponseTestCue(float width, ResponseTestRunner test)
+        {
+            Rect card = new Rect((width - 560f) * 0.5f, 210f, 560f, 176f);
+            DrawPanel(card, new Color(0.025f, 0.055f, 0.065f, 0.94f));
+            GUI.Label(new Rect(card.x + 22f, card.y + 12f, 360f, 28f),
+                test.CurrentPhase == ResponseTestRunner.Phase.Prepare
+                    ? "反応テスト  準備"
+                    : $"反応テスト  {test.CycleNumber}/{test.CycleCount}", _headingStyle);
+
+            Rect beat = new Rect(card.xMax - 52f, card.y + 14f, 30f, 30f);
+            GUI.DrawTexture(beat, test.BeatVisible ? _primaryTexture : _secondaryTexture);
+
+            string cue;
+            string detail;
+            switch (test.CurrentPhase)
+            {
+                case ResponseTestRunner.Phase.Pedal:
+                    cue = $"漕いでください  {Mathf.RoundToInt(test.TargetRpm)} rpm";
+                    detail = "カチッという音1回ごとに片足を踏み込みます（1回転で2回）";
+                    break;
+                case ResponseTestRunner.Phase.Stop:
+                    cue = "止めてください";
+                    detail = "足を止めたまま、次の合図を待ちます";
+                    break;
+                default:
+                    cue = "止まったまま待ってください";
+                    detail = "ペダルが枠内に映っていることを確認してください";
+                    break;
+            }
+
+            GUI.Label(new Rect(card.x + 22f, card.y + 48f, card.width - 44f, 48f), cue, _cueStyle);
+            GUI.Label(new Rect(card.x + 22f, card.y + 100f, card.width - 44f, 24f), detail, _smallStyle);
+            GUI.Label(new Rect(card.x + 22f, card.y + 132f, 300f, 30f),
+                $"残り {Mathf.CeilToInt(test.PhaseRemainingSeconds)} 秒", _bodyStyle);
+            GUI.enabled = true;
+            if (GUI.Button(new Rect(card.xMax - 150f, card.y + 126f, 128f, 38f), "中止 (Esc)", _buttonStyle))
+            {
+                test.Cancel();
+            }
+        }
+
+        private void DrawResponseTestResults(float width, float height, ResponseTestRunner test)
+        {
+            GUI.DrawTexture(new Rect(0f, 0f, width, height), _whiteTexture, ScaleMode.StretchToFill,
+                true, 0f, new Color(0.01f, 0.025f, 0.03f, 0.78f), 0f, 0f);
+            float cardWidth = Mathf.Min(820f, width - 60f);
+            float cardHeight = Mathf.Min(520f, height - 50f);
+            Rect card = new Rect((width - cardWidth) * 0.5f, (height - cardHeight) * 0.5f, cardWidth, cardHeight);
+            DrawPanel(card, new Color(0.035f, 0.075f, 0.08f, 0.98f));
+            GUI.Label(new Rect(card.x + 32f, card.y + 22f, card.width - 64f, 34f), "反応テストの結果", _headingStyle);
+
+            float[] columns = { 32f, 150f, 262f, 374f, 486f, 640f };
+            string[] headers = { "目標", "検出まで", "景色 50%", "停止判定", "景色停止", "平均 rpm（誤差）" };
+            float y = card.y + 70f;
+            for (int i = 0; i < headers.Length; i++)
+            {
+                GUI.Label(new Rect(card.x + columns[i], y, 150f, 24f), headers[i], _smallStyle);
+            }
+
+            y += 28f;
+            foreach (ResponseTestRunner.CycleResult result in test.Results)
+            {
+                string rpm = result.MeanRpm.HasValue
+                    ? $"{result.MeanRpm.Value:0.0}（{result.RpmErrorPercent.Value:+0.0;-0.0;0.0}%）"
+                    : "検出なし";
+                string[] cells =
+                {
+                    $"{result.TargetRpm:0} rpm",
+                    Seconds(result.DetectLatency),
+                    Seconds(result.DisplayLatency),
+                    Seconds(result.StopDetectLatency),
+                    Seconds(result.DisplayStopLatency),
+                    rpm
+                };
+                for (int i = 0; i < cells.Length; i++)
+                {
+                    GUI.Label(new Rect(card.x + columns[i], y, 170f, 28f), cells[i], _bodyStyle);
+                }
+
+                GUI.Label(new Rect(card.x + columns[5], y + 24f, 170f, 20f),
+                    $"検出率 {result.DetectedFraction * 100f:0}%", _smallStyle);
+                y += 54f;
+            }
+
+            float? absoluteError = ResponseTestRunner.Median(test.Results,
+                r => r.RpmErrorPercent.HasValue ? Mathf.Abs(r.RpmErrorPercent.Value) : (float?)null);
+            GUI.Label(new Rect(card.x + 32f, y + 6f, card.width - 64f, 28f),
+                "中央値: 検出まで " + Seconds(ResponseTestRunner.Median(test.Results, r => r.DetectLatency)) +
+                "  ・  停止判定 " + Seconds(ResponseTestRunner.Median(test.Results, r => r.StopDetectLatency)) +
+                "  ・  回転数の誤差 " + (absoluteError.HasValue ? absoluteError.Value.ToString("0.0") + "%" : "—"),
+                _bodyStyle);
+            GUI.Label(new Rect(card.x + 32f, y + 40f, card.width - 64f, 44f),
+                "時間は合図からの秒数で、合図に反応するまでの時間（約0.3〜0.5秒）を含みます。回転数は、漕いでいた最後の6秒間の平均です。",
+                _smallStyle);
+            GUI.Label(new Rect(card.x + 32f, card.yMax - 118f, card.width - 64f, 44f), test.SaveMessage, _smallStyle);
+
+            if (GUI.Button(new Rect(card.x + 32f, card.yMax - 66f, 200f, 46f), "もう一度テスト", _buttonStyle))
+            {
+                test.Dismiss();
+                _app.TryStartResponseTest();
+            }
+
+            if (!string.IsNullOrEmpty(test.SavedDirectory) &&
+                GUI.Button(new Rect(card.x + 244f, card.yMax - 66f, 200f, 46f), "保存フォルダを開く", _buttonStyle))
+            {
+                Application.OpenURL(new System.Uri(test.SavedDirectory + System.IO.Path.DirectorySeparatorChar).AbsoluteUri);
+            }
+
+            if (GUI.Button(new Rect(card.xMax - 152f, card.yMax - 66f, 120f, 46f), "閉じる", _primaryButtonStyle))
+            {
+                test.Dismiss();
+            }
+        }
+
+        private static string Seconds(float? value)
+        {
+            return value.HasValue ? value.Value.ToString("0.0") + " 秒" : "—";
         }
 
         private bool TryParseTrialDuration(out float seconds)
@@ -716,6 +972,7 @@ namespace VirtualRide.UI
             _cameraNameStyle = MakeLabelStyle(13, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.91f, 0.96f, 0.95f));
             _cameraNameStyle.wordWrap = true;
             _cameraNameStyle.clipping = TextClipping.Clip;
+            _cueStyle = MakeLabelStyle(32, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
 
             _buttonStyle = MakeButtonStyle(_roundedTexture, new Color(0.96f, 1f, 0.99f));
             _primaryButtonStyle = MakeButtonStyle(_primaryTexture, Color.white);

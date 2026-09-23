@@ -4,7 +4,9 @@ using System.Globalization;
 using System.IO;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text;
 using UnityEngine;
+using VirtualRide.Input;
 
 namespace VirtualRide.Core
 {
@@ -200,6 +202,7 @@ namespace VirtualRide.Core
             yield return new WaitForSecondsRealtime(.25f);
             Check(_app.Session.DistanceMetres == stoppedDistance, "Timed end kept accumulating distance");
             yield return CheckFixedVideoSpeed();
+            CheckCadenceEstimator();
             CheckWriterFailure();
             yield return CaptureAdditionalViews();
 
@@ -253,6 +256,107 @@ namespace VirtualRide.Core
             _app.SetVideoSpeedMode(VirtualRideApp.VideoSpeedMode.PedalLinked);
             _app.TogglePedalPreview();
             Check(!_app.IsVideoSpeedFixed && _app.PedalPreviewVisible, "Video speed settings could not be restored");
+        }
+
+        /// <summary>
+        /// Feeds synthetic pedal motion with known cadence, frame jitter, noise and a second
+        /// harmonic into the same estimator the camera uses, then records accuracy and latency.
+        /// </summary>
+        private void CheckCadenceEstimator()
+        {
+            var thresholds = new CadenceEstimator.Thresholds(1.8f, 0.38f, 1.55f, 0.78f);
+            var cases = new[] { (45f, true), (60f, true), (80f, true), (100f, true), (60f, false) };
+            var json = new StringBuilder("{\n  \"algorithm\": \"" + CadenceEstimator.AlgorithmVersion + "\",\n  \"cases\": [\n");
+            uint seed = 20260923u;
+            for (int c = 0; c < cases.Length; c++)
+            {
+                float targetRpm = cases[c].Item1;
+                bool bothLegs = cases[c].Item2;
+                const float pedalStart = 2f;
+                const float pedalEnd = 10f;
+                var estimator = new CadenceEstimator();
+                float nextAnalysis = 0f;
+                float? detectedAt = null;
+                float? lostAt = null;
+                float rpmSum = 0f;
+                int rpmCount = 0;
+                int steadyAnalyses = 0;
+                float t = 0f;
+                while (t < 13f)
+                {
+                    seed = seed * 1664525u + 1013904223u;
+                    float jitter = ((seed >> 8) / 16777216f - 0.5f) * 0.008f;
+                    t += 1f / 30f + jitter;
+                    seed = seed * 1664525u + 1013904223u;
+                    float noise = ((seed >> 8) / 16777216f - 0.5f) * 0.8f;
+                    bool pedalling = t >= pedalStart && t < pedalEnd;
+                    float motion;
+                    if (pedalling)
+                    {
+                        float cycles = (t - pedalStart) * targetRpm / 60f * (bothLegs ? 2f : 1f);
+                        motion = 1.2f + 5f * (0.5f - 0.5f * Mathf.Cos(2f * Mathf.PI * cycles)) +
+                            1.2f * Mathf.Cos(4f * Mathf.PI * cycles) + noise;
+                    }
+                    else
+                    {
+                        motion = 0.5f + noise * 0.4f;
+                    }
+
+                    estimator.AddSample(t, Mathf.Max(0f, motion), pedalling ? 2.4f : 1.2f, pedalling ? 0.3f : 0.1f);
+                    if (t < nextAnalysis)
+                    {
+                        continue;
+                    }
+
+                    nextAnalysis = t + CadenceEstimator.AnalysisInterval;
+                    estimator.Analyze(t, thresholds, bothLegs);
+                    if (pedalling && !detectedAt.HasValue && estimator.HasCadence)
+                    {
+                        detectedAt = t - pedalStart;
+                    }
+
+                    if (pedalling && t >= pedalStart + 5f)
+                    {
+                        steadyAnalyses++;
+                        if (estimator.HasCadence)
+                        {
+                            rpmSum += estimator.Rpm;
+                            rpmCount++;
+                        }
+                    }
+
+                    if (!pedalling && t >= pedalEnd && !lostAt.HasValue && !estimator.HasCadence)
+                    {
+                        lostAt = t - pedalEnd;
+                    }
+                }
+
+                float? meanRpm = rpmCount > 0 ? rpmSum / rpmCount : (float?)null;
+                float? errorPercent = meanRpm.HasValue ? (meanRpm.Value - targetRpm) / targetRpm * 100f : (float?)null;
+                float coverage = steadyAnalyses > 0 ? rpmCount / (float)steadyAnalyses : 0f;
+                string label = targetRpm.ToString("0", CultureInfo.InvariantCulture) + (bothLegs ? " rpm both legs" : " rpm one leg");
+                // One visible leg gives one motion period per revolution, so it needs a longer window.
+                Check(detectedAt.HasValue && detectedAt.Value <= (bothLegs ? 2.2f : 3.2f), "Cadence " + label + " was detected too late");
+                Check(errorPercent.HasValue && Mathf.Abs(errorPercent.Value) <= 3f, "Cadence " + label + " error exceeded 3%");
+                Check(coverage >= 0.95f, "Cadence " + label + " dropped out while pedalling steadily");
+                Check(lostAt.HasValue && lostAt.Value <= 1.0f, "Stopping at " + label + " was detected too late");
+                json.Append("    { \"targetRpm\": ").Append(targetRpm.ToString("0", CultureInfo.InvariantCulture))
+                    .Append(", \"bothLegsVisible\": ").Append(bothLegs ? "true" : "false")
+                    .Append(", \"detectSeconds\": ").Append(Format(detectedAt))
+                    .Append(", \"meanRpm\": ").Append(Format(meanRpm))
+                    .Append(", \"errorPercent\": ").Append(Format(errorPercent))
+                    .Append(", \"steadyCoverage\": ").Append(Format(coverage))
+                    .Append(", \"stopSeconds\": ").Append(Format(lostAt))
+                    .Append(c < cases.Length - 1 ? " },\n" : " }\n");
+            }
+
+            json.Append("  ]\n}\n");
+            File.WriteAllText(Path.Combine(_outputDirectory, "cadence-estimator.json"), json.ToString());
+        }
+
+        private static string Format(float? value)
+        {
+            return value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "null";
         }
 
         private void CheckWriterFailure()

@@ -39,6 +39,8 @@ namespace VirtualRide.Core
         private string _dataDirectory;
         private float _trialDurationSeconds;
         private string _startingInputMode = string.Empty;
+        private string _startingInputDeviceName = string.Empty;
+        private string _startingInputProtocol = string.Empty;
         private string _applicationVersion = string.Empty;
         private string _unityVersion = string.Empty;
         private string _productName = string.Empty;
@@ -316,6 +318,12 @@ namespace VirtualRide.Core
         private void CaptureStartMetadata(VirtualRideApp app)
         {
             _startingInputMode = app.InputModeName ?? string.Empty;
+            _startingInputDeviceName = app.ActiveInputIsBluetooth
+                ? app.BluetoothInput.ConnectedDeviceName
+                : string.Empty;
+            _startingInputProtocol = app.ActiveInputIsBluetooth
+                ? "Bluetooth LE CSC 0x1816/0x2A5B"
+                : app.ActiveInputIsCamera ? "local camera motion estimator" : "keyboard simulation";
             _applicationVersion = string.IsNullOrWhiteSpace(Application.version)
                 ? "unspecified"
                 : Application.version;
@@ -411,6 +419,8 @@ namespace VirtualRide.Core
                 "  \"averageSpeedKph\": " + Number(averageSpeed) + ",\n" +
                 "  \"maximumSpeedKph\": " + Number(maximumSpeed) + ",\n" +
                 "  \"startingInputMode\": \"" + Json(_startingInputMode) + "\",\n" +
+                "  \"startingInputDeviceName\": \"" + Json(_startingInputDeviceName) + "\",\n" +
+                "  \"inputProtocol\": \"" + Json(_startingInputProtocol) + "\",\n" +
                 "  \"finalInputMode\": \"" + Json(finalInputMode) + "\",\n" +
                 "  \"inputLocked\": true,\n" +
                 "  \"applicationVersion\": \"" + Json(_applicationVersion) + "\",\n" +
@@ -425,9 +435,12 @@ namespace VirtualRide.Core
                 "  \"videoSpeedMode\": \"" + Json(_videoSpeedMode) + "\",\n" +
                 "  \"fixedVideoSpeedKph\": " + (_videoSpeedMode == "fixed" ? Number(_fixedVideoSpeedKph) : "null") + ",\n" +
                 "  \"pedalPreviewVisible\": " + (_pedalPreviewVisible ? "true" : "false") + ",\n" +
+                "  \"displayAccelerationKphPerSecond\": " + Number(VirtualRideApp.DisplayAccelerationKphPerSecond) + ",\n" +
+                "  \"displayDecelerationKphPerSecond\": " + Number(VirtualRideApp.DisplayDecelerationKphPerSecond) + ",\n" +
                 "  \"routeStartMetres\": 0,\n" +
                 "  \"elapsedIncludesPauses\": true,\n" +
                 "  \"camera\": {\n" +
+                "    \"algorithm\": \"" + CadenceEstimator.AlgorithmVersion + "\",\n" +
                 "    \"bothLegsVisible\": " + (_cameraBothLegsVisible ? "true" : "false") + ",\n" +
                 "    \"sensitivity\": \"" + Json(_cameraSensitivity) + "\",\n" +
                 "    \"metersPerRevolution\": " + Number(_cameraMetersPerRevolution) + ",\n" +
