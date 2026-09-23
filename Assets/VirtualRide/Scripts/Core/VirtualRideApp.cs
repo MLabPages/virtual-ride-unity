@@ -316,6 +316,50 @@ namespace VirtualRide.Core
             return true;
         }
 
+        public bool TrySelectAdjacentCamera(int direction)
+        {
+            if (!CanChangeCameraSettings())
+            {
+                return false;
+            }
+
+            _cameraInput.SelectAdjacentDevice(direction);
+            return true;
+        }
+
+        public bool TryRestartCamera()
+        {
+            if (!CanChangeCameraSettings())
+            {
+                return false;
+            }
+
+            _cameraInput.RestartCamera();
+            return true;
+        }
+
+        public bool TryCycleCameraRegion()
+        {
+            if (!CanChangeCameraSettings())
+            {
+                return false;
+            }
+
+            _cameraInput.CycleRegion();
+            return true;
+        }
+
+        private bool CanChangeCameraSettings()
+        {
+            if (!IsInputLocked)
+            {
+                return true;
+            }
+
+            NotifyActionBlocked("記録中はカメラ設定を変更できません。開始前に合わせてください。");
+            return false;
+        }
+
         private bool TrySetInput(IRideInputSource source)
         {
             if (source == null)

@@ -13,6 +13,15 @@ namespace VirtualRide.Input
             Low
         }
 
+        public enum MeasurementRegion
+        {
+            Full,
+            Lower,
+            Left,
+            Right,
+            Center
+        }
+
         private struct MotionSample
         {
             public float Time;
@@ -41,8 +50,14 @@ namespace VirtualRide.Input
         private const float HistorySeconds = 6f;
         private const float MinimumRpm = 35f;
         private const float MaximumRpm = 115f;
+        private const string CameraPreferenceKey = "VirtualRide.CameraDeviceName";
+        private const string RegionPreferenceKey = "VirtualRide.CameraRegion";
+        private const float DarkFrameBrightness = 10f;
+        private const float DarkFrameSeconds = 2f;
+        private const float StalledFrameSeconds = 3f;
 
         private readonly List<MotionSample> _motionSamples = new List<MotionSample>(140);
+        private readonly List<string> _deviceNames = new List<string>();
 
         private WebCamTexture _camera;
         private Color32[] _cameraPixels;
@@ -59,6 +74,13 @@ namespace VirtualRide.Input
         private RideInputState _state = RideInputState.Offline;
         private Candidate? _candidate;
         private Coroutine _startRoutine;
+        private string _selectedDeviceName = string.Empty;
+        private bool _devicesLoaded;
+        private bool _streaming;
+        private float _lastFrameAt;
+        private float _frameBrightness = -1f;
+        private float _darkSince = -1f;
+        private bool _frameProblem;
 
         public string DisplayName => "カメラ計測";
         public bool IsActive => _isActive;
@@ -69,6 +91,69 @@ namespace VirtualRide.Input
         public DetectionSensitivity Sensitivity { get; private set; } = DetectionSensitivity.Standard;
         public float MetersPerRevolution { get; private set; } = 4.2f;
         public float MotionLevel => _motionLevel;
+        public MeasurementRegion Region { get; private set; } = MeasurementRegion.Full;
+        public IReadOnlyList<string> DeviceNames => _deviceNames;
+        public string SelectedDeviceName => _selectedDeviceName;
+        public int SelectedDeviceIndex => _deviceNames.IndexOf(_selectedDeviceName);
+
+        public string SelectedDeviceLabel
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_selectedDeviceName))
+                {
+                    return _devicesLoaded ? "カメラが見つかりません" : "カメラを確認中…";
+                }
+
+                int index = SelectedDeviceIndex;
+                return index >= 0 && _deviceNames.Count > 1
+                    ? $"{index + 1}/{_deviceNames.Count}  {_selectedDeviceName}"
+                    : _selectedDeviceName;
+            }
+        }
+
+        public string RegionLabel
+        {
+            get
+            {
+                switch (Region)
+                {
+                    case MeasurementRegion.Lower:
+                        return "下半分";
+                    case MeasurementRegion.Left:
+                        return "左半分";
+                    case MeasurementRegion.Right:
+                        return "右半分";
+                    case MeasurementRegion.Center:
+                        return "中央";
+                    default:
+                        return "全体";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Analysed area in texture coordinates (origin at the bottom-left, 0..1).
+        /// </summary>
+        public Rect RegionRect
+        {
+            get
+            {
+                switch (Region)
+                {
+                    case MeasurementRegion.Lower:
+                        return new Rect(0f, 0f, 1f, 0.5f);
+                    case MeasurementRegion.Left:
+                        return new Rect(0f, 0f, 0.5f, 1f);
+                    case MeasurementRegion.Right:
+                        return new Rect(0.5f, 0f, 0.5f, 1f);
+                    case MeasurementRegion.Center:
+                        return new Rect(0.2f, 0.2f, 0.6f, 0.6f);
+                    default:
+                        return new Rect(0f, 0f, 1f, 1f);
+                }
+            }
+        }
 
         public string SensitivityLabel
         {
@@ -92,6 +177,15 @@ namespace VirtualRide.Input
             _confidence,
             _state,
             _status);
+
+        private void Awake()
+        {
+            int savedRegion = PlayerPrefs.GetInt(RegionPreferenceKey, (int)MeasurementRegion.Full);
+            if (System.Enum.IsDefined(typeof(MeasurementRegion), savedRegion))
+            {
+                Region = (MeasurementRegion)savedRegion;
+            }
+        }
 
         public void Activate()
         {
@@ -127,13 +221,22 @@ namespace VirtualRide.Input
             }
 
             float now = Time.realtimeSinceStartup;
-            if (_camera != null && _camera.isPlaying && _camera.didUpdateThisFrame && now >= _nextSampleAt)
+            if (_camera != null && _camera.isPlaying && _camera.didUpdateThisFrame)
             {
-                _nextSampleAt = now + SampleInterval;
-                SampleMotion(now);
+                _lastFrameAt = now;
+                if (now >= _nextSampleAt)
+                {
+                    _nextSampleAt = now + SampleInterval;
+                    SampleMotion(now);
+                }
             }
 
-            if (_motionSamples.Count >= 50 && now >= _nextAnalysisAt)
+            if (_streaming)
+            {
+                UpdateFrameHealth(now);
+            }
+
+            if (!_frameProblem && _motionSamples.Count >= 50 && now >= _nextAnalysisAt)
             {
                 _nextAnalysisAt = now + AnalysisInterval;
                 AnalyzeCadence(now);
@@ -167,6 +270,95 @@ namespace VirtualRide.Input
             ResetRhythmCandidate();
         }
 
+        public void CycleRegion()
+        {
+            Region = (MeasurementRegion)(((int)Region + 1) % System.Enum.GetValues(typeof(MeasurementRegion)).Length);
+            PlayerPrefs.SetInt(RegionPreferenceKey, (int)Region);
+            PlayerPrefs.Save();
+            _motionSamples.Clear();
+            _previousGray = null;
+            ResetRhythmCandidate();
+        }
+
+        /// <summary>
+        /// Re-reads the cameras Windows currently exposes, e.g. after a USB camera was plugged in.
+        /// Keeps the current choice when it is still connected.
+        /// </summary>
+        public void RefreshDevices()
+        {
+            _deviceNames.Clear();
+            WebCamDevice[] devices = WebCamTexture.devices;
+            if (devices != null)
+            {
+                for (int i = 0; i < devices.Length; i++)
+                {
+                    if (!string.IsNullOrEmpty(devices[i].name) && !_deviceNames.Contains(devices[i].name))
+                    {
+                        _deviceNames.Add(devices[i].name);
+                    }
+                }
+            }
+
+            _devicesLoaded = true;
+            if (!_deviceNames.Contains(_selectedDeviceName))
+            {
+                _selectedDeviceName = ChooseDefaultDevice();
+            }
+        }
+
+        /// <summary>Selects the previous (-1) or next (+1) camera and restarts the preview.</summary>
+        public void SelectAdjacentDevice(int direction)
+        {
+            RefreshDevices();
+            if (_deviceNames.Count == 0)
+            {
+                if (_isActive)
+                {
+                    RestartCamera();
+                }
+
+                return;
+            }
+
+            int index = Mathf.Max(0, SelectedDeviceIndex);
+            int count = _deviceNames.Count;
+            index = ((index + (direction < 0 ? -1 : 1)) % count + count) % count;
+            SelectDevice(_deviceNames[index]);
+        }
+
+        public void SelectDevice(string deviceName)
+        {
+            if (string.IsNullOrEmpty(deviceName))
+            {
+                return;
+            }
+
+            _selectedDeviceName = deviceName;
+            PlayerPrefs.SetString(CameraPreferenceKey, deviceName);
+            PlayerPrefs.Save();
+            RestartCamera();
+        }
+
+        /// <summary>Stops and reopens the selected camera, e.g. after another app released it.</summary>
+        public void RestartCamera()
+        {
+            if (!_isActive)
+            {
+                return;
+            }
+
+            if (_startRoutine != null)
+            {
+                StopCoroutine(_startRoutine);
+                _startRoutine = null;
+            }
+
+            StopCameraTexture();
+            ResetDetection();
+            SetStatus(RideInputState.Searching, "カメラを準備しています…");
+            _startRoutine = StartCoroutine(BeginCamera());
+        }
+
         public void ChangeMetersPerRevolution(float amount)
         {
             MetersPerRevolution = Mathf.Clamp(
@@ -193,14 +385,17 @@ namespace VirtualRide.Input
                 yield break;
             }
 
-            WebCamDevice[] devices = WebCamTexture.devices;
-            if (devices == null || devices.Length == 0)
+            RefreshDevices();
+            if (string.IsNullOrEmpty(_selectedDeviceName))
             {
-                SetStatus(RideInputState.Error, "利用できるカメラが見つかりません");
+                _startRoutine = null;
+                SetStatus(RideInputState.Error, "利用できるカメラが見つかりません。USBカメラを挿してから「再接続」を押してください");
                 yield break;
             }
 
-            _camera = new WebCamTexture(devices[0].name, RequestedWidth, RequestedHeight, RequestedFps);
+            string deviceName = _selectedDeviceName;
+            SetStatus(RideInputState.Searching, $"「{deviceName}」を準備しています…");
+            _camera = new WebCamTexture(deviceName, RequestedWidth, RequestedHeight, RequestedFps);
             _camera.Play();
 
             float timeoutAt = Time.realtimeSinceStartup + 8f;
@@ -217,14 +412,110 @@ namespace VirtualRide.Input
 
             if (_camera.width <= 16)
             {
-                SetStatus(RideInputState.Error, "カメラ映像を開始できませんでした");
+                SetStatus(RideInputState.Error,
+                    $"「{deviceName}」を開始できませんでした。他のアプリを閉じるか、◀ ▶ で別のカメラを選んでください");
                 StopCameraTexture();
                 yield break;
             }
 
             _nextSampleAt = Time.realtimeSinceStartup;
             _nextAnalysisAt = Time.realtimeSinceStartup + 3f;
+            _lastFrameAt = Time.realtimeSinceStartup;
+            _streaming = true;
             SetStatus(RideInputState.Searching, "ペダルの動きを探しています…");
+        }
+
+        private void UpdateFrameHealth(float now)
+        {
+            string problem = null;
+            if (now - _lastFrameAt > StalledFrameSeconds)
+            {
+                problem = "カメラ映像が止まっています。他のアプリがカメラを使っていないか確認し、「再接続」を押してください";
+            }
+            else if (_frameBrightness >= 0f && _frameBrightness < DarkFrameBrightness)
+            {
+                if (_darkSince < 0f)
+                {
+                    _darkSince = now;
+                }
+
+                if (now - _darkSince >= DarkFrameSeconds)
+                {
+                    problem = "映像が真っ暗です。カメラのシャッター・向きを確認するか、◀ ▶ で別のカメラを選んでください";
+                }
+            }
+            else
+            {
+                _darkSince = -1f;
+            }
+
+            if (problem != null)
+            {
+                if (!_frameProblem)
+                {
+                    _frameProblem = true;
+                    ResetRhythmCandidate();
+                    _currentRpm = -1f;
+                    _confidence = 0f;
+                }
+
+                SetStatus(RideInputState.Error, problem);
+                return;
+            }
+
+            if (_frameProblem)
+            {
+                _frameProblem = false;
+                _motionSamples.Clear();
+                _previousGray = null;
+                _nextAnalysisAt = now + 3f;
+                SetStatus(RideInputState.Searching, "ペダルの動きを探しています…");
+            }
+        }
+
+        private string ChooseDefaultDevice()
+        {
+            if (_deviceNames.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            string saved = PlayerPrefs.GetString(CameraPreferenceKey, string.Empty);
+            if (_deviceNames.Contains(saved))
+            {
+                return saved;
+            }
+
+            // Windows Hello infrared cameras produce dark monochrome frames; avoid them by default.
+            for (int i = 0; i < _deviceNames.Count; i++)
+            {
+                if (!LooksLikeInfraredCamera(_deviceNames[i]))
+                {
+                    return _deviceNames[i];
+                }
+            }
+
+            return _deviceNames[0];
+        }
+
+        private static bool LooksLikeInfraredCamera(string deviceName)
+        {
+            string lower = deviceName.ToLowerInvariant();
+            if (lower.Contains("infrared") || lower.Contains("windows hello") || lower.Contains("赤外線"))
+            {
+                return true;
+            }
+
+            string[] tokens = lower.Split(' ', '-', '_', '(', ')', '[', ']', ',');
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                if (tokens[i] == "ir")
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void SampleMotion(float now)
@@ -239,20 +530,31 @@ namespace VirtualRide.Input
             }
 
             _camera.GetPixels32(_cameraPixels);
+            Rect region = RegionRect;
+            int regionX = Mathf.Clamp(Mathf.FloorToInt(region.x * width), 0, width - 1);
+            int regionY = Mathf.Clamp(Mathf.FloorToInt(region.y * height), 0, height - 1);
+            int regionWidth = Mathf.Clamp(Mathf.RoundToInt(region.width * width), 1, width - regionX);
+            int regionHeight = Mathf.Clamp(Mathf.RoundToInt(region.height * height), 1, height - regionY);
             int analysisCount = AnalysisWidth * AnalysisHeight;
             float[] gray = new float[analysisCount];
+            float brightnessSum = 0f;
 
             for (int y = 0; y < AnalysisHeight; y++)
             {
-                int sourceY = Mathf.Clamp((y * height + height / 2) / AnalysisHeight, 0, height - 1);
+                int sourceY = Mathf.Clamp(
+                    regionY + (y * regionHeight + regionHeight / 2) / AnalysisHeight, 0, height - 1);
                 for (int x = 0; x < AnalysisWidth; x++)
                 {
-                    int sourceX = Mathf.Clamp((x * width + width / 2) / AnalysisWidth, 0, width - 1);
+                    int sourceX = Mathf.Clamp(
+                        regionX + (x * regionWidth + regionWidth / 2) / AnalysisWidth, 0, width - 1);
                     Color32 pixel = _cameraPixels[sourceY * width + sourceX];
-                    gray[y * AnalysisWidth + x] =
-                        0.299f * pixel.r + 0.587f * pixel.g + 0.114f * pixel.b;
+                    float value = 0.299f * pixel.r + 0.587f * pixel.g + 0.114f * pixel.b;
+                    gray[y * AnalysisWidth + x] = value;
+                    brightnessSum += value;
                 }
             }
+
+            _frameBrightness = brightnessSum / analysisCount;
 
             if (_previousGray != null)
             {
@@ -468,6 +770,10 @@ namespace VirtualRide.Input
             _motionLevel = 0f;
             _lastGoodAt = -100f;
             _candidate = null;
+            _streaming = false;
+            _frameProblem = false;
+            _frameBrightness = -1f;
+            _darkSince = -1f;
         }
 
         private void StopCameraTexture()

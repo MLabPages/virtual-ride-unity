@@ -47,6 +47,8 @@ namespace VirtualRide.Core
         private bool _cameraBothLegsVisible = true;
         private string _cameraSensitivity = string.Empty;
         private float _cameraMetersPerRevolution;
+        private string _cameraDeviceName = string.Empty;
+        private string _cameraRegion = string.Empty;
         private bool _comfortMode;
         private bool _minimalHud;
         private bool _windEnabled;
@@ -330,12 +332,16 @@ namespace VirtualRide.Core
                 _cameraBothLegsVisible = camera.BothLegsVisible;
                 _cameraSensitivity = camera.Sensitivity.ToString();
                 _cameraMetersPerRevolution = camera.MetersPerRevolution;
+                _cameraDeviceName = camera.SelectedDeviceName ?? string.Empty;
+                _cameraRegion = camera.Region.ToString();
             }
             else
             {
                 _cameraBothLegsVisible = true;
                 _cameraSensitivity = string.Empty;
                 _cameraMetersPerRevolution = 0f;
+                _cameraDeviceName = string.Empty;
+                _cameraRegion = string.Empty;
             }
         }
 
@@ -415,7 +421,9 @@ namespace VirtualRide.Core
                 "  \"camera\": {\n" +
                 "    \"bothLegsVisible\": " + (_cameraBothLegsVisible ? "true" : "false") + ",\n" +
                 "    \"sensitivity\": \"" + Json(_cameraSensitivity) + "\",\n" +
-                "    \"metersPerRevolution\": " + Number(_cameraMetersPerRevolution) + "\n" +
+                "    \"metersPerRevolution\": " + Number(_cameraMetersPerRevolution) + ",\n" +
+                "    \"deviceName\": \"" + Json(_cameraDeviceName) + "\",\n" +
+                "    \"measurementRegion\": \"" + Json(_cameraRegion) + "\"\n" +
                 "  },\n" +
                 "  \"measurementValidated\": false,\n" +
                 "  \"cameraFramesSaved\": false,\n" +

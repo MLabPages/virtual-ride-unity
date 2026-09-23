@@ -19,6 +19,7 @@ namespace VirtualRide.UI
         private GUIStyle _primaryButtonStyle;
         private GUIStyle _dangerButtonStyle;
         private GUIStyle _statusStyle;
+        private GUIStyle _cameraNameStyle;
         private GUIStyle _textFieldStyle;
         private Texture2D _whiteTexture;
         private Texture2D _roundedTexture;
@@ -282,57 +283,129 @@ namespace VirtualRide.UI
 
         private void DrawCameraPanel(float width, float height)
         {
-            Rect panel = new Rect(28f, 210f, 318f, 348f);
+            Rect panel = new Rect(28f, 210f, 318f, 400f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.91f));
-            GUI.Label(new Rect(panel.x + 18f, panel.y + 13f, panel.width - 36f, 27f), "ペダル確認", _headingStyle);
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 11f, panel.width - 36f, 27f), "ペダル確認", _headingStyle);
 
-            Rect preview = new Rect(panel.x + 18f, panel.y + 48f, panel.width - 36f, 168f);
             CameraCadenceInput camera = _app.CameraInput;
+            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 44f, 34f, 34f), "◀", _buttonStyle))
+            {
+                _app.TrySelectAdjacentCamera(-1);
+            }
+
+            GUI.Label(new Rect(panel.x + 58f, panel.y + 44f, panel.width - 116f, 34f),
+                camera.SelectedDeviceLabel, _cameraNameStyle);
+            if (GUI.Button(new Rect(panel.xMax - 52f, panel.y + 44f, 34f, 34f), "▶", _buttonStyle))
+            {
+                _app.TrySelectAdjacentCamera(1);
+            }
+
+            Rect preview = new Rect(panel.x + 18f, panel.y + 86f, panel.width - 36f, 158f);
             GUI.DrawTexture(preview, _secondaryTexture, ScaleMode.StretchToFill);
             if (camera.HasPreview)
             {
-                Matrix4x4 oldMatrix = GUI.matrix;
-                Vector2 pivot = preview.center;
-                GUIUtility.RotateAroundPivot(-camera.PreviewTextureRotation(), pivot);
-                Rect rotatedRect = preview;
-                if (Mathf.Abs(camera.PreviewTextureRotation()) == 90f)
+                float rotation = camera.PreviewTextureRotation();
+                if (Mathf.Approximately(rotation, 0f))
                 {
-                    rotatedRect = new Rect(
-                        pivot.x - preview.height * 0.5f,
-                        pivot.y - preview.width * 0.5f,
-                        preview.height,
-                        preview.width);
+                    // Show the whole frame so the region outline matches what is analysed.
+                    Rect fitted = FitRect(preview, camera.PreviewTexture.width / (float)camera.PreviewTexture.height);
+                    GUI.DrawTexture(fitted, camera.PreviewTexture, ScaleMode.StretchToFill, true);
+                    DrawRegionOutline(fitted, camera.RegionRect);
                 }
+                else
+                {
+                    Matrix4x4 oldMatrix = GUI.matrix;
+                    Vector2 pivot = preview.center;
+                    GUIUtility.RotateAroundPivot(-rotation, pivot);
+                    Rect rotatedRect = preview;
+                    if (Mathf.Abs(rotation) == 90f)
+                    {
+                        rotatedRect = new Rect(
+                            pivot.x - preview.height * 0.5f,
+                            pivot.y - preview.width * 0.5f,
+                            preview.height,
+                            preview.width);
+                    }
 
-                GUI.DrawTexture(rotatedRect, camera.PreviewTexture, ScaleMode.ScaleAndCrop, true);
-                GUI.matrix = oldMatrix;
+                    GUI.DrawTexture(rotatedRect, camera.PreviewTexture, ScaleMode.ScaleAndCrop, true);
+                    GUI.matrix = oldMatrix;
+                }
             }
             else
             {
-                GUI.Label(preview, "カメラ準備中…", _statusStyle);
+                GUI.Label(preview, _app.ActiveSample.State == RideInputState.Error ? "映像なし" : "カメラ準備中…",
+                    _statusStyle);
             }
 
-            Rect motionTrack = new Rect(panel.x + 18f, panel.y + 224f, panel.width - 36f, 8f);
+            Rect motionTrack = new Rect(panel.x + 18f, panel.y + 252f, panel.width - 36f, 8f);
             GUI.DrawTexture(motionTrack, _secondaryTexture, ScaleMode.StretchToFill);
             GUI.DrawTexture(new Rect(motionTrack.x, motionTrack.y, motionTrack.width * camera.MotionLevel, motionTrack.height),
                 _primaryTexture, ScaleMode.StretchToFill);
 
-            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 244f, 131f, 38f),
+            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 268f, 131f, 36f),
                 camera.BothLegsVisible ? "両足が映る" : "片足だけ映る", _buttonStyle))
             {
                 _app.TryToggleCameraLegView();
             }
 
-            if (GUI.Button(new Rect(panel.x + 158f, panel.y + 244f, 142f, 38f),
+            if (GUI.Button(new Rect(panel.x + 158f, panel.y + 268f, 142f, 36f),
                 "感度: " + camera.SensitivityLabel, _buttonStyle))
             {
                 _app.TryCycleCameraSensitivity();
             }
 
-            GUI.Label(new Rect(panel.x + 18f, panel.y + 288f, panel.width - 36f, 20f),
-                "映像は保存・送信しません", _smallStyle);
-            GUI.Label(new Rect(panel.x + 18f, panel.y + 308f, panel.width - 36f, 28f),
+            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 310f, 180f, 36f),
+                "計測範囲: " + camera.RegionLabel, _buttonStyle))
+            {
+                _app.TryCycleCameraRegion();
+            }
+
+            if (GUI.Button(new Rect(panel.x + 206f, panel.y + 310f, 94f, 36f), "再接続", _buttonStyle))
+            {
+                _app.TryRestartCamera();
+            }
+
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 352f, panel.width - 36f, 20f),
+                "枠内のペダルの動きだけを計測・映像は保存しません", _smallStyle);
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 372f, panel.width - 36f, 24f),
                 "回転数・速度は未検証の推定値です", _warningStyle);
+        }
+
+        private static Rect FitRect(Rect bounds, float aspect)
+        {
+            if (aspect <= 0f || float.IsNaN(aspect) || float.IsInfinity(aspect))
+            {
+                return bounds;
+            }
+
+            if (bounds.width / bounds.height > aspect)
+            {
+                float fittedWidth = bounds.height * aspect;
+                return new Rect(bounds.center.x - fittedWidth * 0.5f, bounds.y, fittedWidth, bounds.height);
+            }
+
+            float fittedHeight = bounds.width / aspect;
+            return new Rect(bounds.x, bounds.center.y - fittedHeight * 0.5f, bounds.width, fittedHeight);
+        }
+
+        private void DrawRegionOutline(Rect image, Rect region)
+        {
+            if (region.width >= 0.999f && region.height >= 0.999f)
+            {
+                return;
+            }
+
+            // Texture coordinates start at the bottom-left; GUI coordinates start at the top-left.
+            Rect outline = new Rect(
+                image.x + region.x * image.width,
+                image.y + (1f - region.y - region.height) * image.height,
+                region.width * image.width,
+                region.height * image.height);
+            const float thickness = 3f;
+            GUI.DrawTexture(new Rect(outline.x, outline.y, outline.width, thickness), _primaryTexture);
+            GUI.DrawTexture(new Rect(outline.x, outline.yMax - thickness, outline.width, thickness), _primaryTexture);
+            GUI.DrawTexture(new Rect(outline.x, outline.y, thickness, outline.height), _primaryTexture);
+            GUI.DrawTexture(new Rect(outline.xMax - thickness, outline.y, thickness, outline.height), _primaryTexture);
         }
 
         private void DrawPausedOverlay(float width, float height)
@@ -369,7 +442,7 @@ namespace VirtualRide.UI
 
             GUI.Label(new Rect(card.x + 38f, card.y + 258f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
             GUI.Label(new Rect(card.x + 38f, card.y + 288f, card.width - 76f, 120f),
-                "1. PCカメラにペダルと足元が横から映るよう固定します\n2. 「カメラ計測を始める」を押します\n3. 3〜5秒、一定のペースで漕ぎます\n4. 検出中と rpm が表示されたら、その速さで仮想空間を進みます", _bodyStyle);
+                "1. USBカメラを、ペダルと足元が横から映るよう固定します\n2. 「カメラ計測を始める」→ 左の ◀ ▶ でカメラを選びます\n3. 「計測範囲」の枠をペダル付近に合わせ、一定ペースで漕ぎます\n4. 検出中と rpm が表示されたら、その速さで進みます", _bodyStyle);
 
             GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 168f, card.width - 76f, 58f),
                 "カメラの回転数・速度は未検証の推定値です。実験記録中は入力方式を切り替えられません。\nカメラ映像はこのPC内だけで計算し、保存も送信もしません。",
@@ -580,6 +653,9 @@ namespace VirtualRide.UI
             _warningStyle.wordWrap = true;
             _statusStyle = MakeLabelStyle(17, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
             _statusStyle.wordWrap = true;
+            _cameraNameStyle = MakeLabelStyle(13, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.91f, 0.96f, 0.95f));
+            _cameraNameStyle.wordWrap = true;
+            _cameraNameStyle.clipping = TextClipping.Clip;
 
             _buttonStyle = MakeButtonStyle(_roundedTexture, new Color(0.96f, 1f, 0.99f));
             _primaryButtonStyle = MakeButtonStyle(_primaryTexture, Color.white);
