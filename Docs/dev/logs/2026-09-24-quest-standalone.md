@@ -1,5 +1,11 @@
 # 2026-09-24 Meta Quest 3 単体版
 
+## 実機表示の修正
+
+- Quest 3で起動したところ背景とHUDのパネル形状は表示されたが、文字が全て欠けて操作できなかった。HUDがWindowsのOSフォント名（Yu Gothic / Meiryo / Arial）に依存していたため、Android向けにはNoto Sans CJK JP RegularをResourcesから読み込むよう変更した。
+- フォントは [Noto CJK](https://github.com/notofonts/noto-cjk) の静的OTFを同梱し、同梱の `OFL.txt` にSIL Open Font License 1.1を保存した。
+- Quest実機での修正版APKの文字表示と操作は再確認待ち。
+
 ## 実装
 
 - Windows版はそのまま残し、Unityメニューに `Tools > Virtual Ride > Build Quest Android APK` と `Configure Quest Android XR` を追加した。出力は `Builds/Quest/VirtualRide.apk`（Windowsは従来どおり `Builds/Windows`）。

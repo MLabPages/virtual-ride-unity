@@ -1096,8 +1096,18 @@ namespace VirtualRide.UI
             _secondaryTexture = MakeTexture(new Color(0.15f, 0.22f, 0.23f, 1f));
             _dangerTexture = MakeTexture(new Color(0.78f, 0.22f, 0.17f, 1f));
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+            // Quest does not have the Windows fonts below. Keep the font in Resources so
+            // Unity includes its Japanese glyphs in the Android player.
+            _font = Resources.Load<Font>("Fonts/NotoSansCJKjp-Regular");
+            if (_font == null)
+            {
+                Debug.LogError("Quest HUD font is missing: Fonts/NotoSansCJKjp-Regular");
+            }
+#else
             string[] preferredFonts = { "Yu Gothic UI", "Yu Gothic", "Meiryo UI", "Meiryo", "Arial" };
             _font = Font.CreateDynamicFontFromOSFont(preferredFonts, 22);
+#endif
 
             _speedStyle = MakeLabelStyle(62, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
             _unitStyle = MakeLabelStyle(20, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.72f, 0.88f, 0.87f));
