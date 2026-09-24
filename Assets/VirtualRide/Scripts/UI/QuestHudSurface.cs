@@ -1,12 +1,17 @@
+using UnityEngine.InputSystem;
 using UnityEngine;
 using UnityEngine.XR;
+using UnityEngine.XR.Hands;
+using InputDevice = UnityEngine.XR.InputDevice;
+using OculusTouchController = UnityEngine.XR.OpenXR.Features.Interactions.OculusTouchControllerProfile.OculusTouchController;
 
 namespace VirtualRide.UI
 {
     /// <summary>
     /// Quest only: the existing IMGUI HUD is drawn into a render texture shown on a panel
     /// that rides with the bicycle (it follows the route, not the head). The controller ray
-    /// hits that panel and its trigger clicks HUD buttons. Windows keeps the screen HUD.
+    /// hits that panel and its trigger or index-finger pinch clicks HUD buttons.
+    /// Windows keeps the screen HUD.
     /// </summary>
     public sealed class QuestHudSurface : MonoBehaviour
     {
@@ -20,7 +25,8 @@ namespace VirtualRide.UI
         private Transform _panel;
         private Vector2 _pointer;
         private bool _hasPointer;
-        private bool _wasTriggerPressed;
+        private bool _wasPressed;
+        private int _activeSource;
         private bool _clickPending;
         private bool _clickConsumed;
         private int _updatedFrame = -1;
@@ -94,25 +100,23 @@ namespace VirtualRide.UI
             if (!EnsurePanel()) return;
 
             Camera camera = Camera.main;
-            InputDevice head = InputDevices.GetDeviceAtXRNode(XRNode.CenterEye);
-            if (!head.isValid) head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
-            InputDevice hand = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
-            if (!hand.isValid) hand = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
-            if (camera == null || !head.isValid || !hand.isValid ||
-                !head.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 headPosition) ||
-                !head.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion headRotation) ||
-                !hand.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 handPosition) ||
-                !hand.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion handRotation))
+            InputDevice head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
+            if (camera == null || !head.isValid ||
+                !TryGetHeadPose(head, out Vector3 headPosition, out Quaternion headRotation) ||
+                !TryGetAimPose(out Vector3 aimPosition, out Quaternion aimRotation,
+                    out bool pressed, out int source))
             {
-                _wasTriggerPressed = false;
+                _wasPressed = false;
+                _activeSource = 0;
                 return;
             }
 
-            // The controller pose relative to the head, re-expressed from the tracked camera.
+            // All OpenXR poses share tracking space. Re-express the aim pose from the
+            // tracked head camera, whose local pose is recentered for seated riding.
             Quaternion headInverse = Quaternion.Inverse(headRotation);
             Transform cameraTransform = camera.transform;
-            Vector3 origin = cameraTransform.TransformPoint(headInverse * (handPosition - headPosition));
-            Vector3 direction = cameraTransform.rotation * (headInverse * (handRotation * Vector3.forward));
+            Vector3 origin = cameraTransform.TransformPoint(headInverse * (aimPosition - headPosition));
+            Vector3 direction = cameraTransform.rotation * (headInverse * (aimRotation * Vector3.forward));
 
             Plane plane = new Plane(-_panel.forward, _panel.position);
             if (plane.Raycast(new Ray(origin, direction), out float distance) && distance > 0f)
@@ -125,11 +129,77 @@ namespace VirtualRide.UI
                 }
             }
 
-            bool pressed = hand.TryGetFeatureValue(CommonUsages.triggerButton, out bool button)
-                ? button
-                : hand.TryGetFeatureValue(CommonUsages.trigger, out float value) && value >= TriggerThreshold;
-            _clickPending = pressed && !_wasTriggerPressed;
-            _wasTriggerPressed = pressed;
+            _clickPending = source == _activeSource && pressed && !_wasPressed && _hasPointer;
+            _wasPressed = pressed;
+            _activeSource = source;
+        }
+
+        private static bool TryGetHeadPose(InputDevice head, out Vector3 position, out Quaternion rotation)
+        {
+            rotation = default;
+            if (head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.centerEyePosition, out position) &&
+                head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.centerEyeRotation, out rotation))
+                return true;
+            return head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.devicePosition, out position) &&
+                head.TryGetFeatureValue(UnityEngine.XR.CommonUsages.deviceRotation, out rotation);
+        }
+
+        private static bool TryGetAimPose(out Vector3 position, out Quaternion rotation,
+            out bool pressed, out int source)
+        {
+            // Meta's aim pose points where the index finger is aimed; the grip pose
+            // previously used for Touch controllers points above the physical controller.
+            if (TryGetHandAim(MetaAimHand.right, 1, out position, out rotation, out pressed, out source) ||
+                TryGetHandAim(MetaAimHand.left, 2, out position, out rotation, out pressed, out source))
+                return true;
+
+            foreach (var device in InputSystem.devices)
+            {
+                if (!(device is OculusTouchController controller) ||
+                    controller.pointer == null || !controller.pointer.isTracked.isPressed)
+                    continue;
+
+                int side = 0;
+                foreach (var usage in controller.usages)
+                {
+                    if (usage == UnityEngine.InputSystem.CommonUsages.RightHand) side = 3;
+                    if (usage == UnityEngine.InputSystem.CommonUsages.LeftHand) side = 4;
+                }
+                if (side == 0) continue;
+                position = controller.pointer.position.ReadValue();
+                rotation = controller.pointer.rotation.ReadValue();
+                pressed = controller.triggerPressed.isPressed ||
+                    controller.trigger.ReadValue() >= TriggerThreshold;
+                source = side;
+                return true;
+            }
+
+            position = default;
+            rotation = default;
+            pressed = false;
+            source = 0;
+            return false;
+        }
+
+        private static bool TryGetHandAim(MetaAimHand hand, int side,
+            out Vector3 position, out Quaternion rotation, out bool pressed, out int source)
+        {
+            if (hand != null && hand.added &&
+                ((MetaAimFlags)hand.aimFlags.ReadValue() & MetaAimFlags.Valid) != 0 &&
+                ((MetaAimFlags)hand.aimFlags.ReadValue() & MetaAimFlags.SystemGesture) == 0)
+            {
+                position = hand.devicePosition.ReadValue();
+                rotation = hand.deviceRotation.ReadValue();
+                pressed = hand.indexPressed.isPressed;
+                source = side;
+                return true;
+            }
+
+            position = default;
+            rotation = default;
+            pressed = false;
+            source = 0;
+            return false;
         }
 
         /// <summary>Pointer position in the HUD's virtual 1600x900 layout space.</summary>

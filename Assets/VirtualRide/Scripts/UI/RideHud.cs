@@ -314,7 +314,7 @@ namespace VirtualRide.UI
 
             float x = panel.x + 13f;
             float y = panel.y + 10f;
-            if (UiButton(new Rect(x, y, 142f, 38f), "カメラ計測",
+            if (UiButton(new Rect(x, y, 142f, 38f), _app.SupportsRelayInput ? "Quest USB" : "カメラ計測",
                     ReferenceEquals(_app.ActiveInput, _app.CameraInput) ? _primaryButtonStyle : _buttonStyle))
             {
                 _app.UseCameraInput();
@@ -677,10 +677,14 @@ namespace VirtualRide.UI
 
             GUI.Label(new Rect(card.x + 38f, card.y + 258f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
             GUI.Label(new Rect(card.x + 38f, card.y + 288f, card.width - 76f, 120f),
-                "1. USBカメラを使う場合は「カメラ計測」を選び、左の ◀ ▶ で選択します\n2. ケイデンスセンサーは下部の「BLEセンサー」から検索して選びます\n3. カメラは計測範囲を調整し、センサーはペダルを回して起動します\n4. rpm が表示されたら、その速さでコースを進みます", _bodyStyle);
+                _app.SupportsRelayInput
+                    ? "1. PC内蔵カメラはWindows版で計測し「Questへ送信」をON\n2. Questでは下部の「PC中継」を選びます\n3. BK9Cは「BLEセンサー」から直接接続できます\n4. 手を向けて人差し指と親指をつまむと選択できます"
+                    : "1. USBカメラを使う場合は「カメラ計測」を選び、左の ◀ ▶ で選択します\n2. ケイデンスセンサーは下部の「BLEセンサー」から検索して選びます\n3. カメラは計測範囲を調整し、センサーはペダルを回して起動します\n4. rpm が表示されたら、その速さでコースを進みます", _bodyStyle);
 
             GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 168f, card.width - 76f, 58f),
-                "カメラ推定・Bluetooth計測とも基準機器との照合前です。実験記録中は入力を切り替えられません。\n入力データはこのPC内で扱います。カメラ映像は保存・送信しません。",
+                _app.SupportsRelayInput
+                    ? "カメラ推定・Bluetooth計測とも基準機器との照合前です。実験記録中は入力を切り替えられません。\nPC中継は速度・rpmだけを送り、カメラ映像は送りません。"
+                    : "カメラ推定・Bluetooth計測とも基準機器との照合前です。実験記録中は入力を切り替えられません。\n入力データはこのPC内で扱います。カメラ映像は保存・送信しません。",
                 _smallStyle);
 
             float buttonY = card.y + cardHeight - 80f;
@@ -690,9 +694,11 @@ namespace VirtualRide.UI
                 _app.HideHelp();
             }
 
-            if (UiButton(new Rect(card.x + 272f, buttonY, 238f, 48f), "カメラ計測を始める", _buttonStyle))
+            if (UiButton(new Rect(card.x + 272f, buttonY, 238f, 48f),
+                    _app.SupportsRelayInput ? "PC中継を始める" : "カメラ計測を始める", _buttonStyle))
             {
-                _app.UseCameraInput();
+                if (_app.SupportsRelayInput) _app.UseRelayInput();
+                else _app.UseCameraInput();
                 _app.HideHelp();
             }
 

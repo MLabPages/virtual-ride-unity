@@ -6,6 +6,13 @@
 - フォントは [Noto CJK](https://github.com/notofonts/noto-cjk) の静的OTFを同梱し、同梱の `OFL.txt` にSIL Open Font License 1.1を保存した。
 - Quest実機での修正版APKの文字表示と操作は再確認待ち。
 
+## 手追跡とカメラ接続
+
+- Touchコントローラーでポインターが上へずれる報告を受け、握り位置のポーズからOpenXRのAimポーズへ変更した。
+- XR Hands 1.7.2 のHand Tracking SubsystemとMeta Hand Tracking AimをQuest向けに有効化し、左右いずれかの手で指差し、親指と人差し指のピンチでHUDボタンを選べるようにした。コントローラーのトリガーも残した。いずれも再ビルド後の実機確認が必要。
+- PC内蔵カメラはQuestのカメラ一覧には出ない。Windows版で「カメラ計測」を選んでから「Questへ送信: ON」にし、Quest版は「PC中継」を選ぶ。両機を同じネットワーク（iPhoneテザリング可）につなぐ。Questの「Quest USB」はQuest本体へ接続したカメラ向けで、認識は実機未検証。
+- 手追跡版のQuest APKビルド成功。APK内に `com.oculus.permission.HAND_TRACKING` と任意機能 `oculus.software.handtracking` を確認。Windowsビルド成功、`QA/quest-hands-smoke/result.json` は `passed: true`。Quest実機での手・コントローラー操作とPC中継は未確認。
+
 ## 実装
 
 - Windows版はそのまま残し、Unityメニューに `Tools > Virtual Ride > Build Quest Android APK` と `Configure Quest Android XR` を追加した。出力は `Builds/Quest/VirtualRide.apk`（Windowsは従来どおり `Builds/Windows`）。

@@ -17,6 +17,7 @@ using UnityEngine.XR.OpenXR;
 using UnityEngine.XR.OpenXR.Features;
 using UnityEngine.XR.OpenXR.Features.Interactions;
 using UnityEngine.XR.OpenXR.Features.MetaQuestSupport;
+using UnityEngine.XR.Hands.OpenXR;
 
 namespace VirtualRide.Editor
 {
@@ -150,10 +151,14 @@ namespace VirtualRide.Editor
             openXR.latencyOptimization = OpenXRSettings.LatencyOptimization.PrioritizeInputPolling;
             MetaQuestFeature quest = openXR.GetFeature<MetaQuestFeature>();
             OculusTouchControllerProfile touch = openXR.GetFeature<OculusTouchControllerProfile>();
-            if (quest == null || touch == null)
-                throw new BuildFailedException("OpenXR Meta Quest Support / Oculus Touch profile is unavailable.");
+            HandTracking hands = openXR.GetFeature<HandTracking>();
+            MetaHandTrackingAim handAim = openXR.GetFeature<MetaHandTrackingAim>();
+            if (quest == null || touch == null || hands == null || handAim == null)
+                throw new BuildFailedException("Quest controller or hand-tracking OpenXR features are unavailable.");
             quest.enabled = true;
             touch.enabled = true;
+            hands.enabled = true;
+            handAim.enabled = true;
             // Quest 3 ("eureka") and Quest 3S; these are serialized fields in pinned OpenXR 1.17.1.
             var questSettings = new SerializedObject(quest);
             SerializedProperty devices = questSettings.FindProperty("targetDevices");
@@ -174,6 +179,8 @@ namespace VirtualRide.Editor
             EditorUtility.SetDirty(openXR);
             EditorUtility.SetDirty(quest);
             EditorUtility.SetDirty(touch);
+            EditorUtility.SetDirty(hands);
+            EditorUtility.SetDirty(handAim);
             AssetDatabase.SaveAssets();
             Debug.Log("Quest configuration ready: Android ARM64 / IL2CPP / Vulkan / OpenXR / Quest 3 / SDK 32-34. Windows XR settings are unchanged.");
         }
