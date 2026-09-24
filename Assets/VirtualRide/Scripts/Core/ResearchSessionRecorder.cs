@@ -544,6 +544,10 @@ namespace VirtualRide.Core
 
         internal static string ResolveDefaultDataDirectory()
         {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            // Quest: Android/data/<app>/files/VirtualRideResearchData, readable over USB with adb or MQDH.
+            return Path.Combine(Application.persistentDataPath, "VirtualRideResearchData");
+#else
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             if (!string.IsNullOrWhiteSpace(documents))
             {
@@ -551,6 +555,7 @@ namespace VirtualRide.Core
             }
 
             return Path.Combine(Application.persistentDataPath, "VirtualRideResearchData");
+#endif
         }
 
         private static string SanitizeIdentifier(string value)

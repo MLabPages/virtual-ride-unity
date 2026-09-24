@@ -25,7 +25,9 @@ namespace VirtualRide.Core
         private RideSession _session;
         private KeyboardRideInput _keyboardInput;
         private CameraCadenceInput _cameraInput;
-        private BluetoothCadenceInput _bluetoothInput;
+        private IBluetoothCadenceInput _bluetoothInput;
+        private PcRelayCadenceInput _relayInput;
+        private readonly CadenceRelaySender _relaySender = new CadenceRelaySender();
         private IRideInputSource _inputBeforeBluetooth;
         private ResearchSessionRecorder _researchRecorder;
         private ResponseTestRunner _responseTest;
@@ -48,7 +50,22 @@ namespace VirtualRide.Core
         public RideRoute Route => _route;
         public RideSession Session => _session;
         public CameraCadenceInput CameraInput => _cameraInput;
-        public BluetoothCadenceInput BluetoothInput => _bluetoothInput;
+        public IBluetoothCadenceInput BluetoothInput => _bluetoothInput;
+        public PcRelayCadenceInput RelayInput => _relayInput;
+        public bool SupportsRelayInput => _relayInput != null;
+        public bool IsRelaySending => _relaySender.IsEnabled;
+        public string RelayQuestAddress => _relaySender.QuestAddressText;
+        public bool IsQuestBuild
+        {
+            get
+            {
+#if UNITY_ANDROID && !UNITY_EDITOR
+                return true;
+#else
+                return false;
+#endif
+            }
+        }
         public KeyboardRideInput KeyboardInput => _keyboardInput;
         public ResearchSessionRecorder ResearchRecorder => _researchRecorder;
         public ResponseTestRunner ResponseTest => _responseTest;
@@ -92,7 +109,11 @@ namespace VirtualRide.Core
             }
 
             Instance = this;
+#if UNITY_ANDROID && !UNITY_EDITOR
+            Application.targetFrameRate = -1;
+#else
             Application.targetFrameRate = 60;
+#endif
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
             _route = new RideRoute();
@@ -107,7 +128,12 @@ namespace VirtualRide.Core
             GameObject inputObject = new GameObject("Ride Inputs");
             _keyboardInput = inputObject.AddComponent<KeyboardRideInput>();
             _cameraInput = inputObject.AddComponent<CameraCadenceInput>();
+#if UNITY_ANDROID && !UNITY_EDITOR
+            _bluetoothInput = inputObject.AddComponent<AndroidBluetoothCadenceInput>();
+            _relayInput = inputObject.AddComponent<PcRelayCadenceInput>();
+#else
             _bluetoothInput = inputObject.AddComponent<BluetoothCadenceInput>();
+#endif
             SetInput(_keyboardInput);
 
             gameObject.AddComponent<RideHud>();
@@ -127,6 +153,8 @@ namespace VirtualRide.Core
             if (!ReferenceEquals(_activeInput, _bluetoothInput)) _activeInput?.Tick(unscaledDeltaTime);
 
             RideInputSample sample = ActiveSample;
+            // The PC relays the measured value; the Quest applies its own video-speed condition.
+            _relaySender.Tick(sample);
             bool validInput = !float.IsNaN(sample.SpeedKph) && !float.IsInfinity(sample.SpeedKph)
                 && sample.State != RideInputState.Error && sample.State != RideInputState.Offline;
             // In the fixed condition the scenery ignores pedalling; the input is still measured and logged.
@@ -168,6 +196,32 @@ namespace VirtualRide.Core
             }
 
             _paused = false;
+        }
+
+        /// <summary>Quest: ride on the cadence measured by the Windows app (external camera or PC BLE).</summary>
+        public void UseRelayInput()
+        {
+            if (_relayInput == null || !TrySetInput(_relayInput))
+            {
+                return;
+            }
+
+            _paused = false;
+        }
+
+        /// <summary>Windows: broadcast the measured input to a Quest on the same network.</summary>
+        public void ToggleRelaySending()
+        {
+            if (!_relaySender.SetEnabled(!_relaySender.IsEnabled))
+            {
+                NotifyActionBlocked(_relaySender.Error);
+            }
+        }
+
+        /// <summary>Windows: optional direct address of the Quest (shown on the Quest while waiting).</summary>
+        public bool SetRelayQuestAddress(string address)
+        {
+            return _relaySender.SetQuestAddress(address);
         }
 
         /// <summary>
@@ -643,6 +697,7 @@ namespace VirtualRide.Core
                 _researchRecorder?.Stop(this, ResearchSessionRecorder.StopReasonApplicationClosed);
                 _activeInput?.Deactivate();
                 _bluetoothInput?.Shutdown();
+                _relaySender.Dispose();
                 Instance = null;
             }
         }

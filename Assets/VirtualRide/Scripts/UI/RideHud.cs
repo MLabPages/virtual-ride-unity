@@ -34,10 +34,23 @@ namespace VirtualRide.UI
         private string _trialDurationText = "";
         private string _eventNote = "";
         private string _formMessage = "";
+        private string _relayAddressText;
+        private string _keyboardFieldName = string.Empty;
+        private TouchScreenKeyboard _touchScreenKeyboard;
+        private QuestHudSurface _questSurface;
 
         private void Awake()
         {
             _app = GetComponent<VirtualRideApp>();
+            if (QuestHudSurface.IsSupported)
+            {
+                _questSurface = gameObject.AddComponent<QuestHudSurface>();
+            }
+        }
+
+        private void Update()
+        {
+            _questSurface?.UpdatePointer();
         }
 
         private void OnGUI()
@@ -48,11 +61,33 @@ namespace VirtualRide.UI
             }
 
             EnsureStyles();
-            float scale = Mathf.Clamp(Mathf.Min(Screen.width / 1280f, Screen.height / 760f), 0.35f, 1.35f);
             Matrix4x4 previousMatrix = GUI.matrix;
-            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, Vector3.one * scale);
-            float width = Screen.width / scale;
-            float height = Screen.height / scale;
+            RenderTexture previousTarget = null;
+            bool drawingToQuestPanel = false;
+            float width;
+            float height;
+            if (_questSurface != null && _questSurface.Texture != null)
+            {
+                // Layout in a fixed 1600x900 space. IMGUI maps screen coordinates onto the
+                // whole active target, so this non-uniform matrix fills the panel texture.
+                width = QuestHudSurface.VirtualWidth;
+                height = QuestHudSurface.VirtualHeight;
+                GUI.matrix = Matrix4x4.Scale(new Vector3(Screen.width / width, Screen.height / height, 1f));
+                if (Event.current.type == EventType.Repaint)
+                {
+                    previousTarget = RenderTexture.active;
+                    RenderTexture.active = _questSurface.Texture;
+                    GL.Clear(true, true, Color.clear);
+                    drawingToQuestPanel = true;
+                }
+            }
+            else
+            {
+                float scale = Mathf.Clamp(Mathf.Min(Screen.width / 1280f, Screen.height / 760f), 0.35f, 1.35f);
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, Vector3.one * scale);
+                width = Screen.width / scale;
+                height = Screen.height / scale;
+            }
 
             ResponseTestRunner responseTest = _app.ResponseTest;
             bool modal = _app.HelpVisible || _app.ResearchPanelVisible || responseTest.HasResults ||
@@ -109,7 +144,65 @@ namespace VirtualRide.UI
                 (_app.ActiveSample.State == RideInputState.Error || _app.ActiveSample.State == RideInputState.Offline))
                 DrawStatus(width, height);
 
+            DrawQuestControllerPointer(width, height);
             GUI.matrix = previousMatrix;
+            if (drawingToQuestPanel)
+            {
+                RenderTexture.active = previousTarget;
+            }
+        }
+
+        private bool UiButton(Rect rect, string label, GUIStyle style)
+        {
+            bool clicked = GUI.Button(rect, label, style);
+            if (clicked)
+            {
+                return true;
+            }
+
+            bool controllerClicked = _questSurface != null && _questSurface.TryConsumeClick(rect);
+            if (controllerClicked)
+            {
+                GUI.changed = true;
+            }
+
+            return controllerClicked;
+        }
+
+        private string UiTextField(Rect rect, string value, int maxLength, GUIStyle style, string fieldName)
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (_questSurface != null && _questSurface.TryConsumeClick(rect))
+            {
+                _keyboardFieldName = fieldName;
+                _touchScreenKeyboard = TouchScreenKeyboard.Open(value, TouchScreenKeyboardType.Default);
+            }
+
+            if (_keyboardFieldName == fieldName && _touchScreenKeyboard != null)
+            {
+                value = _touchScreenKeyboard.text ?? value;
+                if (_touchScreenKeyboard.status == TouchScreenKeyboard.Status.Done ||
+                    _touchScreenKeyboard.status == TouchScreenKeyboard.Status.Canceled ||
+                    _touchScreenKeyboard.status == TouchScreenKeyboard.Status.LostFocus)
+                {
+                    _touchScreenKeyboard = null;
+                    _keyboardFieldName = string.Empty;
+                }
+            }
+#endif
+            return GUI.TextField(rect, value, maxLength, style);
+        }
+
+        private void DrawQuestControllerPointer(float width, float height)
+        {
+            if (_questSurface == null || Event.current == null || Event.current.type != EventType.Repaint ||
+                !_questSurface.TryGetPointer(out Vector2 position))
+            {
+                return;
+            }
+
+            DrawPanel(new Rect(position.x - 10f, position.y - 10f, 20f, 20f), new Color(0f, 0f, 0f, 0.88f));
+            DrawPanel(new Rect(position.x - 6f, position.y - 6f, 12f, 12f), new Color(0.30f, 0.91f, 0.79f, 1f));
         }
 
         private void DrawImmersiveControls(float width, float height)
@@ -123,9 +216,9 @@ namespace VirtualRide.UI
             Rect panel = new Rect((width - 680f) * .5f, height - 60f, 680f, 42f);
             DrawPanel(panel, new Color(.025f, .055f, .065f, .72f));
             GUI.Label(new Rect(panel.x+12, panel.y+5, 260, 32), "景色に集中  ·  Spaceで停止 / 再開", _smallStyle);
-            if (GUI.Button(new Rect(panel.x+274,panel.y+4,105,34), _app.IsPaused ? "再開" : "一時停止", _buttonStyle)) _app.TogglePause();
-            if (GUI.Button(new Rect(panel.x+387,panel.y+4,140,34), "実験設定 (F7)", _buttonStyle)) _app.ToggleResearchPanel();
-            if (GUI.Button(new Rect(panel.x+535,panel.y+4,132,34), "通常表示 (Tab)", _buttonStyle)) _app.ToggleMinimalHud();
+            if (UiButton(new Rect(panel.x+274,panel.y+4,105,34), _app.IsPaused ? "再開" : "一時停止", _buttonStyle)) _app.TogglePause();
+            if (UiButton(new Rect(panel.x+387,panel.y+4,140,34), "実験設定 (F7)", _buttonStyle)) _app.ToggleResearchPanel();
+            if (UiButton(new Rect(panel.x+535,panel.y+4,132,34), "通常表示 (Tab)", _buttonStyle)) _app.ToggleMinimalHud();
         }
 
         private void DrawTopHud(float width)
@@ -221,57 +314,65 @@ namespace VirtualRide.UI
 
             float x = panel.x + 13f;
             float y = panel.y + 10f;
-            if (GUI.Button(new Rect(x, y, 142f, 38f), "カメラ計測",
+            if (UiButton(new Rect(x, y, 142f, 38f), "カメラ計測",
                     ReferenceEquals(_app.ActiveInput, _app.CameraInput) ? _primaryButtonStyle : _buttonStyle))
             {
                 _app.UseCameraInput();
             }
 
             x += 150f;
-            if (GUI.Button(new Rect(x, y, 142f, 38f), "キーボード",
+            if (UiButton(new Rect(x, y, 142f, 38f), "キーボード",
                     ReferenceEquals(_app.ActiveInput, _app.KeyboardInput) ? _primaryButtonStyle : _buttonStyle))
             {
                 _app.UseKeyboardInput();
             }
 
             x += 150f;
-            if (GUI.Button(new Rect(x, y, 48f, 38f), "−", _buttonStyle))
+            if (UiButton(new Rect(x, y, 48f, 38f), "−", _buttonStyle))
             {
                 _app.AdjustKeyboardSpeed(-2f);
             }
 
             x += 54f;
-            if (GUI.Button(new Rect(x, y, 48f, 38f), "＋", _buttonStyle))
+            if (UiButton(new Rect(x, y, 48f, 38f), "＋", _buttonStyle))
             {
                 _app.AdjustKeyboardSpeed(2f);
             }
 
             x += 60f;
-            if (GUI.Button(new Rect(x, y, 116f, 38f), _app.IsPaused ? "再開" : "一時停止", _buttonStyle))
+            if (UiButton(new Rect(x, y, 116f, 38f), _app.IsPaused ? "再開" : "一時停止", _buttonStyle))
             {
                 _app.TogglePause();
             }
 
             x += 124f;
-            if (GUI.Button(new Rect(x, y, 90f, 38f), "全画面", _buttonStyle))
+            if (_app.SupportsRelayInput)
+            {
+                if (UiButton(new Rect(x, y, 90f, 38f), "PC中継",
+                        ReferenceEquals(_app.ActiveInput, _app.RelayInput) ? _primaryButtonStyle : _buttonStyle))
+                {
+                    _app.UseRelayInput();
+                }
+            }
+            else if (UiButton(new Rect(x, y, 90f, 38f), "全画面", _buttonStyle))
             {
                 _app.ToggleFullscreen();
             }
 
             x += 98f;
-            if (GUI.Button(new Rect(x, y, 90f, 38f), "使い方", _buttonStyle))
+            if (UiButton(new Rect(x, y, 90f, 38f), "使い方", _buttonStyle))
             {
                 _app.ToggleHelp();
             }
 
             x += 98f;
-            if (GUI.Button(new Rect(x, y, 46f, 38f), _app.WindEnabled ? "音" : "消音", _buttonStyle))
+            if (UiButton(new Rect(x, y, 46f, 38f), _app.WindEnabled ? "音" : "消音", _buttonStyle))
             {
                 _app.ToggleWind();
             }
 
             x += 54f;
-            if (GUI.Button(new Rect(x, y, 126f, 38f),
+            if (UiButton(new Rect(x, y, 126f, 38f),
                 _app.ResearchRecorder.IsRecording ? "● 記録中" : "実験記録",
                 _app.ResearchRecorder.IsRecording ? _dangerButtonStyle : _buttonStyle))
             {
@@ -279,7 +380,7 @@ namespace VirtualRide.UI
             }
 
             x += 134f;
-            if (GUI.Button(new Rect(x, y, 104f, 38f), "BLEセンサー", _buttonStyle))
+            if (UiButton(new Rect(x, y, 104f, 38f), "BLEセンサー", _buttonStyle))
             {
                 _app.ShowBluetoothPanel();
             }
@@ -319,7 +420,7 @@ namespace VirtualRide.UI
                     : device.Address;
                 GUI.Label(new Rect(row.x + 12f, row.y + 4f, row.width - 150f, 34f),
                     device.Name + "  · " + shortAddress + "  " + device.SignalStrength + " dBm", _bodyStyle);
-                if (GUI.Button(new Rect(row.xMax - 112f, row.y + 3f, 100f, 34f), "接続", _primaryButtonStyle))
+                if (UiButton(new Rect(row.xMax - 112f, row.y + 3f, 100f, 34f), "接続", _primaryButtonStyle))
                 {
                     _app.TryConnectBluetoothInput(device.Address);
                 }
@@ -340,26 +441,26 @@ namespace VirtualRide.UI
             }
 
             float buttonY = panel.y + cardHeight - 56f;
-            if (GUI.Button(new Rect(panel.x + 24f, buttonY, 132f, 38f), "再検索", _buttonStyle))
+            if (UiButton(new Rect(panel.x + 24f, buttonY, 132f, 38f), "再検索", _buttonStyle))
             {
                 _app.TryBeginBluetoothScan();
             }
-            if (GUI.Button(new Rect(panel.x + 166f, buttonY, 126f, 38f), "カメラに戻る", _buttonStyle))
+            if (UiButton(new Rect(panel.x + 166f, buttonY, 126f, 38f), "カメラに戻る", _buttonStyle))
             {
                 _app.UseCameraInput();
                 _app.HideBluetoothPanel();
             }
-            if (GUI.Button(new Rect(panel.x + 302f, buttonY, 132f, 38f), "キーボード", _buttonStyle))
+            if (UiButton(new Rect(panel.x + 302f, buttonY, 132f, 38f), "キーボード", _buttonStyle))
             {
                 _app.UseKeyboardInput();
                 _app.HideBluetoothPanel();
             }
-            if (_app.BluetoothInput.IsConnected && GUI.Button(
+            if (_app.BluetoothInput.IsConnected && UiButton(
                 new Rect(panel.xMax - 260f, buttonY, 126f, 38f), "センサー切断", _buttonStyle))
             {
                 _app.TryDisconnectBluetoothInput();
             }
-            if (GUI.Button(new Rect(panel.xMax - 124f, buttonY, 100f, 38f), "閉じる", _buttonStyle))
+            if (UiButton(new Rect(panel.xMax - 124f, buttonY, 100f, 38f), "閉じる", _buttonStyle))
             {
                 _app.HideBluetoothPanel();
             }
@@ -418,14 +519,14 @@ namespace VirtualRide.UI
             GUI.Label(new Rect(panel.x + 18f, panel.y + 11f, panel.width - 36f, 27f), "ペダル確認", _headingStyle);
 
             CameraCadenceInput camera = _app.CameraInput;
-            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 44f, 34f, 34f), "◀", _buttonStyle))
+            if (UiButton(new Rect(panel.x + 18f, panel.y + 44f, 34f, 34f), "◀", _buttonStyle))
             {
                 _app.TrySelectAdjacentCamera(-1);
             }
 
             GUI.Label(new Rect(panel.x + 58f, panel.y + 44f, panel.width - 116f, 34f),
                 camera.SelectedDeviceLabel, _cameraNameStyle);
-            if (GUI.Button(new Rect(panel.xMax - 52f, panel.y + 44f, 34f, 34f), "▶", _buttonStyle))
+            if (UiButton(new Rect(panel.xMax - 52f, panel.y + 44f, 34f, 34f), "▶", _buttonStyle))
             {
                 _app.TrySelectAdjacentCamera(1);
             }
@@ -476,25 +577,25 @@ namespace VirtualRide.UI
             GUI.DrawTexture(new Rect(motionTrack.x, motionTrack.y, motionTrack.width * camera.MotionLevel, motionTrack.height),
                 _primaryTexture, ScaleMode.StretchToFill);
 
-            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 268f, 131f, 36f),
+            if (UiButton(new Rect(panel.x + 18f, panel.y + 268f, 131f, 36f),
                 camera.BothLegsVisible ? "両足が映る" : "片足だけ映る", _buttonStyle))
             {
                 _app.TryToggleCameraLegView();
             }
 
-            if (GUI.Button(new Rect(panel.x + 158f, panel.y + 268f, 142f, 36f),
+            if (UiButton(new Rect(panel.x + 158f, panel.y + 268f, 142f, 36f),
                 "感度: " + camera.SensitivityLabel, _buttonStyle))
             {
                 _app.TryCycleCameraSensitivity();
             }
 
-            if (GUI.Button(new Rect(panel.x + 18f, panel.y + 310f, 180f, 36f),
+            if (UiButton(new Rect(panel.x + 18f, panel.y + 310f, 180f, 36f),
                 "計測範囲: " + camera.RegionLabel, _buttonStyle))
             {
                 _app.TryCycleCameraRegion();
             }
 
-            if (GUI.Button(new Rect(panel.x + 206f, panel.y + 310f, 94f, 36f), "再接続", _buttonStyle))
+            if (UiButton(new Rect(panel.x + 206f, panel.y + 310f, 94f, 36f), "再接続", _buttonStyle))
             {
                 _app.TryRestartCamera();
             }
@@ -549,7 +650,7 @@ namespace VirtualRide.UI
             GUI.Label(new Rect(card.x + 25f, card.y + 24f, card.width - 50f, 46f), "一時停止", _headingStyle);
             GUI.Label(new Rect(card.x + 25f, card.y + 67f, card.width - 50f, 30f),
                 "Spaceキーまたは下のボタンで再開します", _bodyStyle);
-            if (GUI.Button(new Rect(card.x + 145f, card.y + 111f, 170f, 42f), "ライドを再開", _primaryButtonStyle))
+            if (UiButton(new Rect(card.x + 145f, card.y + 111f, 170f, 42f), "ライドを再開", _primaryButtonStyle))
             {
                 _app.TogglePause();
             }
@@ -583,19 +684,19 @@ namespace VirtualRide.UI
                 _smallStyle);
 
             float buttonY = card.y + cardHeight - 80f;
-            if (GUI.Button(new Rect(card.x + 38f, buttonY, 218f, 48f), "キーボードで試す", _primaryButtonStyle))
+            if (UiButton(new Rect(card.x + 38f, buttonY, 218f, 48f), "キーボードで試す", _primaryButtonStyle))
             {
                 _app.UseKeyboardInput();
                 _app.HideHelp();
             }
 
-            if (GUI.Button(new Rect(card.x + 272f, buttonY, 238f, 48f), "カメラ計測を始める", _buttonStyle))
+            if (UiButton(new Rect(card.x + 272f, buttonY, 238f, 48f), "カメラ計測を始める", _buttonStyle))
             {
                 _app.UseCameraInput();
                 _app.HideHelp();
             }
 
-            if (GUI.Button(new Rect(card.xMax - 150f, buttonY, 112f, 48f), "閉じる", _buttonStyle))
+            if (UiButton(new Rect(card.xMax - 150f, buttonY, 112f, 48f), "閉じる", _buttonStyle))
             {
                 _app.HideHelp();
             }
@@ -622,39 +723,47 @@ namespace VirtualRide.UI
             {
                 GUI.Label(new Rect(card.x + 38f, card.y + 124f, 220f, 28f), "匿名の参加者ID", _bodyStyle);
                 GUI.SetNextControlName("participantId");
-                _participantId = GUI.TextField(
+                _participantId = UiTextField(
                     new Rect(card.x + 270f, card.y + 118f, card.width - 308f, 38f),
-                    _participantId, 40, _textFieldStyle);
+                    _participantId, 40, _textFieldStyle, "participantId");
 
                 GUI.Label(new Rect(card.x + 38f, card.y + 172f, 220f, 28f), "実験条件", _bodyStyle);
                 GUI.SetNextControlName("condition");
-                _condition = GUI.TextField(
+                _condition = UiTextField(
                     new Rect(card.x + 270f, card.y + 166f, card.width - 308f, 38f),
-                    _condition, 40, _textFieldStyle);
+                    _condition, 40, _textFieldStyle, "condition");
 
                 GUI.Label(new Rect(card.x + 38f, card.y + 220f, 220f, 28f), "試行時間（秒）", _bodyStyle);
                 GUI.SetNextControlName("trialDuration");
-                _trialDurationText = GUI.TextField(
+                _trialDurationText = UiTextField(
                     new Rect(card.x + 270f, card.y + 214f, card.width - 308f, 38f),
-                    _trialDurationText, 8, _textFieldStyle);
+                    _trialDurationText, 8, _textFieldStyle, "trialDuration");
 
                 GUI.Label(new Rect(card.x + 38f, card.y + 262f, card.width - 76f, 52f),
                     "氏名は使わず、P001のような匿名IDにしてください。空欄または0秒は手動終了です。\n時間が来ると保存して走行を停止します。開始時は同じスタート地点に戻ります。",
                     _smallStyle);
-                if (GUI.Button(new Rect(card.x+38,card.y+328,210,38), _app.ComfortMode ? "視点: 揺れなし" : "視点: ゆるやかな揺れ", _buttonStyle)) _app.ToggleComfortMode();
-                if (GUI.Button(new Rect(card.x+260,card.y+328,210,38), _app.MinimalHud ? "表示: 景色に集中" : "表示: 計器あり", _buttonStyle)) _app.ToggleMinimalHud();
-                if (GUI.Button(new Rect(card.x+482,card.y+328,card.width-520,38), _app.WindEnabled ? "走行音: ON" : "走行音: OFF", _buttonStyle)) _app.ToggleWind();
+                if (UiButton(new Rect(card.x+38,card.y+328,210,38), _app.ComfortMode ? "視点: 揺れなし" : "視点: ゆるやかな揺れ", _buttonStyle)) _app.ToggleComfortMode();
+                if (UiButton(new Rect(card.x+260,card.y+328,210,38), _app.MinimalHud ? "表示: 景色に集中" : "表示: 計器あり", _buttonStyle)) _app.ToggleMinimalHud();
+                if (UiButton(new Rect(card.x+482,card.y+328,card.width-520,38), _app.WindEnabled ? "走行音: ON" : "走行音: OFF", _buttonStyle)) _app.ToggleWind();
                 DrawVideoSpeedControls(card);
-                if (GUI.Button(new Rect(card.x + 38f, card.y + 418f, 210f, 38f),
+                if (UiButton(new Rect(card.x + 38f, card.y + 418f, 210f, 38f),
                     _app.PedalPreviewVisible ? "ペダル映像: 表示" : "ペダル映像: 非表示", _buttonStyle))
                 {
                     _app.TogglePedalPreview();
                 }
 
-                GUI.Label(new Rect(card.x + 260f, card.y + 424f, card.width - 298f, 30f),
-                    "非表示でもカメラ計測は続きます", _smallStyle);
+                if (!_app.IsQuestBuild)
+                {
+                    DrawRelayControls(card);
+                }
+                else
+                {
+                    GUI.Label(new Rect(card.x + 260f, card.y + 424f, card.width - 298f, 30f),
+                        "非表示でも計測は続きます", _smallStyle);
+                }
                 GUI.Label(new Rect(card.x + 38f, card.y + 464f, card.width - 76f, 40f),
-                    "視点・表示・音・映像の速度・ペダル映像は記録中固定。試行時間には一時停止中の時間も含みます。", _smallStyle);
+                    "視点・表示・音・映像の速度・ペダル映像は記録中固定。ペダル映像を隠しても計測は続きます。試行時間には一時停止中の時間も含みます。",
+                    _smallStyle);
             }
             else
             {
@@ -671,13 +780,13 @@ namespace VirtualRide.UI
                     _smallStyle);
 
                 GUI.Label(new Rect(card.x + 38f, card.y + 220f, card.width - 76f, 26f), "イベントマーカー", _headingStyle);
-                if (GUI.Button(new Rect(card.x + 38f, card.y + 252f, 150f, 40f), "指示 (F8)", _buttonStyle))
+                if (UiButton(new Rect(card.x + 38f, card.y + 252f, 150f, 40f), "指示 (F8)", _buttonStyle))
                 {
                     _formMessage = "";
                     _app.AddResearchEventMarker(ResearchSessionRecorder.MarkerInstruction);
                 }
 
-                if (GUI.Button(new Rect(card.x + 198f, card.y + 252f, 150f, 40f), "休息 (F9)", _buttonStyle))
+                if (UiButton(new Rect(card.x + 198f, card.y + 252f, 150f, 40f), "休息 (F9)", _buttonStyle))
                 {
                     _formMessage = "";
                     _app.AddResearchEventMarker(ResearchSessionRecorder.MarkerRest);
@@ -685,10 +794,10 @@ namespace VirtualRide.UI
 
                 GUI.Label(new Rect(card.x + 38f, card.y + 302f, 80f, 28f), "メモ", _bodyStyle);
                 GUI.SetNextControlName("eventNote");
-                _eventNote = GUI.TextField(
+                _eventNote = UiTextField(
                     new Rect(card.x + 118f, card.y + 296f, card.width - 286f, 38f),
-                    _eventNote, 200, _textFieldStyle);
-                if (GUI.Button(new Rect(card.xMax - 158f, card.y + 296f, 120f, 38f), "メモを記録", _buttonStyle))
+                    _eventNote, 200, _textFieldStyle, "eventNote");
+                if (UiButton(new Rect(card.xMax - 158f, card.y + 296f, 120f, 38f), "メモを記録", _buttonStyle))
                 {
                     if (string.IsNullOrWhiteSpace(_eventNote))
                     {
@@ -717,7 +826,7 @@ namespace VirtualRide.UI
             float buttonY = card.y + cardHeight - 72f;
             if (!recorder.IsRecording)
             {
-                if (GUI.Button(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を開始", _primaryButtonStyle))
+                if (UiButton(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を開始", _primaryButtonStyle))
                 {
                     if (!TryParseTrialDuration(out float duration))
                     {
@@ -730,12 +839,12 @@ namespace VirtualRide.UI
                     }
                 }
             }
-            else if (GUI.Button(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を終了して保存", _dangerButtonStyle))
+            else if (UiButton(new Rect(card.x + 38f, buttonY, 220f, 46f), "記録を終了して保存", _dangerButtonStyle))
             {
                 _app.EndResearchSession();
             }
 
-            if (GUI.Button(new Rect(card.x+272f,buttonY,190f,46f), "保存フォルダを開く", _buttonStyle))
+            if (UiButton(new Rect(card.x+272f,buttonY,190f,46f), "保存フォルダを開く", _buttonStyle))
             {
                 if (System.IO.Directory.Exists(recorder.DataDirectory))
                     Application.OpenURL(new System.Uri(recorder.DataDirectory + System.IO.Path.DirectorySeparatorChar).AbsoluteUri);
@@ -743,23 +852,55 @@ namespace VirtualRide.UI
             }
 
             if (!recorder.IsRecording &&
-                GUI.Button(new Rect(card.x + 472f, buttonY, card.width - 630f, 46f), "反応テスト", _buttonStyle))
+                UiButton(new Rect(card.x + 472f, buttonY, card.width - 630f, 46f), "反応テスト", _buttonStyle))
             {
                 _formMessage = "";
                 _app.TryStartResponseTest();
             }
 
-            if (GUI.Button(new Rect(card.xMax - 158f, buttonY, 120f, 46f), "閉じる", _buttonStyle))
+            if (UiButton(new Rect(card.xMax - 158f, buttonY, 120f, 46f), "閉じる", _buttonStyle))
             {
                 _app.HideResearchPanel();
                 GUI.FocusControl(null);
             }
         }
 
+        private void DrawRelayControls(Rect card)
+        {
+            float y = card.y + 418f;
+            if (UiButton(new Rect(card.x + 260f, y, 210f, 38f),
+                    _app.IsRelaySending ? "Questへ送信: ON" : "Questへ送信: OFF",
+                    _app.IsRelaySending ? _primaryButtonStyle : _buttonStyle))
+            {
+                _app.ToggleRelaySending();
+            }
+
+            if (_relayAddressText == null)
+            {
+                _relayAddressText = _app.RelayQuestAddress;
+            }
+
+            Rect field = new Rect(card.x + 482f, y, card.width - 520f, 38f);
+            GUI.SetNextControlName("relayAddress");
+            string edited = UiTextField(field, _relayAddressText, 15, _textFieldStyle, "relayAddress");
+            if (edited != _relayAddressText)
+            {
+                _relayAddressText = edited;
+                bool accepted = _app.SetRelayQuestAddress(edited);
+                bool looksComplete = edited.Split('.').Length == 4 && !edited.EndsWith(".");
+                _formMessage = accepted || !looksComplete ? "" : "QuestのIPアドレスの形式が正しくありません（例: 172.20.10.3）";
+            }
+
+            if (string.IsNullOrEmpty(_relayAddressText) && GUI.GetNameOfFocusedControl() != "relayAddress")
+            {
+                GUI.Label(new Rect(field.x + 12f, field.y + 9f, field.width - 20f, 24f), "QuestのIP（空欄で自動）", _smallStyle);
+            }
+        }
+
         private void DrawVideoSpeedControls(Rect card)
         {
             float y = card.y + 372f;
-            if (GUI.Button(new Rect(card.x + 38f, y, 210f, 38f),
+            if (UiButton(new Rect(card.x + 38f, y, 210f, 38f),
                 _app.IsVideoSpeedFixed ? "映像: 一定速度" : "映像: ペダル連動", _buttonStyle))
             {
                 _app.SetVideoSpeedMode(_app.IsVideoSpeedFixed
@@ -774,20 +915,20 @@ namespace VirtualRide.UI
                 return;
             }
 
-            if (GUI.Button(new Rect(card.x + 260f, y, 44f, 38f), "−", _buttonStyle))
+            if (UiButton(new Rect(card.x + 260f, y, 44f, 38f), "−", _buttonStyle))
             {
                 _app.SetFixedVideoSpeed(_app.FixedVideoSpeedKph - 0.5f);
             }
 
             GUI.Label(new Rect(card.x + 308f, y, 108f, 38f), _app.FixedVideoSpeedKph.ToString("0.0") + " km/h", _statusStyle);
-            if (GUI.Button(new Rect(card.x + 420f, y, 44f, 38f), "＋", _buttonStyle))
+            if (UiButton(new Rect(card.x + 420f, y, 44f, 38f), "＋", _buttonStyle))
             {
                 _app.SetFixedVideoSpeed(_app.FixedVideoSpeedKph + 0.5f);
             }
 
             float previousAverage = _app.Session.AverageSpeedKph;
             if (previousAverage >= VirtualRideApp.MinimumFixedVideoSpeedKph &&
-                GUI.Button(new Rect(card.x + 474f, y, card.width - 512f, 38f),
+                UiButton(new Rect(card.x + 474f, y, card.width - 512f, 38f),
                     $"直前の平均 {previousAverage:0.0} km/h", _buttonStyle))
             {
                 _app.SetFixedVideoSpeed(previousAverage);
@@ -836,7 +977,7 @@ namespace VirtualRide.UI
             GUI.Label(new Rect(card.x + 22f, card.y + 132f, 300f, 30f),
                 $"残り {Mathf.CeilToInt(test.PhaseRemainingSeconds)} 秒", _bodyStyle);
             GUI.enabled = true;
-            if (GUI.Button(new Rect(card.xMax - 150f, card.y + 126f, 128f, 38f), "中止 (Esc)", _buttonStyle))
+            if (UiButton(new Rect(card.xMax - 150f, card.y + 126f, 128f, 38f), "中止 (Esc)", _buttonStyle))
             {
                 test.Cancel();
             }
@@ -897,19 +1038,19 @@ namespace VirtualRide.UI
                 _smallStyle);
             GUI.Label(new Rect(card.x + 32f, card.yMax - 118f, card.width - 64f, 44f), test.SaveMessage, _smallStyle);
 
-            if (GUI.Button(new Rect(card.x + 32f, card.yMax - 66f, 200f, 46f), "もう一度テスト", _buttonStyle))
+            if (UiButton(new Rect(card.x + 32f, card.yMax - 66f, 200f, 46f), "もう一度テスト", _buttonStyle))
             {
                 test.Dismiss();
                 _app.TryStartResponseTest();
             }
 
             if (!string.IsNullOrEmpty(test.SavedDirectory) &&
-                GUI.Button(new Rect(card.x + 244f, card.yMax - 66f, 200f, 46f), "保存フォルダを開く", _buttonStyle))
+                UiButton(new Rect(card.x + 244f, card.yMax - 66f, 200f, 46f), "保存フォルダを開く", _buttonStyle))
             {
                 Application.OpenURL(new System.Uri(test.SavedDirectory + System.IO.Path.DirectorySeparatorChar).AbsoluteUri);
             }
 
-            if (GUI.Button(new Rect(card.xMax - 152f, card.yMax - 66f, 120f, 46f), "閉じる", _primaryButtonStyle))
+            if (UiButton(new Rect(card.xMax - 152f, card.yMax - 66f, 120f, 46f), "閉じる", _primaryButtonStyle))
             {
                 test.Dismiss();
             }

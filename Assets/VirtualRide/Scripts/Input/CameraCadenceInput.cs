@@ -1,6 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+#if UNITY_ANDROID && !UNITY_EDITOR
+using UnityEngine.Android;
+#endif
 
 namespace VirtualRide.Input
 {
@@ -242,7 +245,7 @@ namespace VirtualRide.Input
         }
 
         /// <summary>
-        /// Re-reads the cameras Windows currently exposes, e.g. after a USB camera was plugged in.
+        /// Re-reads the camera devices exposed by the current platform, such as a connected USB camera.
         /// Keeps the current choice when it is still connected.
         /// </summary>
         public void RefreshDevices()
@@ -330,27 +333,63 @@ namespace VirtualRide.Input
 
         private IEnumerator BeginCamera()
         {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (!Permission.HasUserAuthorizedPermission(Permission.Camera))
+            {
+                bool permissionResolved = false;
+                bool permissionGranted = false;
+                var callbacks = new PermissionCallbacks();
+                callbacks.PermissionGranted += _ =>
+                {
+                    permissionGranted = true;
+                    permissionResolved = true;
+                };
+                callbacks.PermissionDenied += _ => permissionResolved = true;
+                Permission.RequestUserPermission(Permission.Camera, callbacks);
+
+                float permissionTimeoutAt = Time.realtimeSinceStartup + 30f;
+                while (!permissionResolved && Time.realtimeSinceStartup < permissionTimeoutAt)
+                {
+                    yield return null;
+                }
+
+                if (!permissionGranted && !Permission.HasUserAuthorizedPermission(Permission.Camera))
+                {
+                    SetStatus(RideInputState.Error,
+                        "Questでカメラ使用が許可されていません。Androidのアプリ権限を確認してください。");
+                    yield break;
+                }
+            }
+#else
             if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
             {
                 yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
             }
+#endif
 
             if (!_isActive)
             {
                 yield break;
             }
 
+#if !UNITY_ANDROID || UNITY_EDITOR
             if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
             {
                 SetStatus(RideInputState.Error, "カメラの使用が許可されていません");
                 yield break;
             }
+#endif
 
             RefreshDevices();
             if (string.IsNullOrEmpty(_selectedDeviceName))
             {
                 _startRoutine = null;
+#if UNITY_ANDROID && !UNITY_EDITOR
+                SetStatus(RideInputState.Error,
+                    "Questから利用できるカメラがありません。外部カメラがAndroidカメラとして認識されているか確認してください。");
+#else
                 SetStatus(RideInputState.Error, "利用できるカメラが見つかりません。USBカメラを挿してから「再接続」を押してください");
+#endif
                 yield break;
             }
 
@@ -373,8 +412,13 @@ namespace VirtualRide.Input
 
             if (_camera.width <= 16)
             {
+#if UNITY_ANDROID && !UNITY_EDITOR
+                SetStatus(RideInputState.Error,
+                    $"「{deviceName}」を開始できません。カメラ使用許可と接続状態を確認してください。");
+#else
                 SetStatus(RideInputState.Error,
                     $"「{deviceName}」を開始できませんでした。他のアプリを閉じるか、◀ ▶ で別のカメラを選んでください");
+#endif
                 StopCameraTexture();
                 yield break;
             }

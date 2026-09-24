@@ -8,4 +8,6 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/VirtualRide.unity
     guid: 2f92c4f453584b179a1d2fb80b267ea1
-  m_configObjects: {}
+  m_configObjects:
+    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 9d528e077eaa8e144b3e7f9d08f112b6, type: 2}
+    com.unity.xr.openxr.settings4: {fileID: 11400000, guid: 4384c38c76a6dc247a62225c7fa11d42, type: 2}

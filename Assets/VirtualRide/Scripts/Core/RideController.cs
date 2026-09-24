@@ -8,6 +8,7 @@ namespace VirtualRide.Core
         private RideRoute _route;
         private Camera _camera;
         private Transform _cameraRig;
+        private QuestHeadPoseTracking _headTracking;
         private Transform _handlebarRig;
         private AudioSource _windSource;
         private float _routeDistance;
@@ -21,6 +22,8 @@ namespace VirtualRide.Core
         public Camera RideCamera => _camera;
         public bool WindEnabled => _windEnabled;
         public bool ComfortMode => _comfortMode;
+
+        public void RecenterHeadTracking() { _headTracking?.Recenter(); }
 
         public void ToggleComfortMode() { _comfortMode = !_comfortMode; }
 
@@ -70,11 +73,13 @@ namespace VirtualRide.Core
 
             float cornerAngle = Vector3.SignedAngle(forward, aheadForward, Vector3.up);
             float desiredRoll = Mathf.Clamp(-cornerAngle * 0.55f, -8f, 8f) * Mathf.InverseLerp(3f, 26f, _speedKph);
-            if (_comfortMode) desiredRoll = 0f;
+            // Artificial roll/bob and changing FOV are unsuitable for the HMD camera.
+            bool steadyView = _comfortMode || _headTracking != null;
+            if (steadyView) desiredRoll = 0f;
             _visualRoll = Mathf.Lerp(_visualRoll, desiredRoll, 1f - Mathf.Exp(-deltaTime * 4f));
 
             float speedFactor = Mathf.InverseLerp(0f, 36f, _speedKph);
-            float motionFactor = _comfortMode ? 0f : speedFactor;
+            float motionFactor = steadyView ? 0f : speedFactor;
             _bobPhase += deltaTime * Mathf.Lerp(1.2f, 8.5f, speedFactor);
             float bob = Mathf.Sin(_bobPhase) * 0.012f * motionFactor;
             float sway = Mathf.Sin(_bobPhase * 0.5f) * 0.016f * motionFactor;
@@ -82,17 +87,20 @@ namespace VirtualRide.Core
             _cameraRig.localRotation = Quaternion.Euler(
                 Mathf.Sin(_bobPhase * 0.5f) * 0.18f * motionFactor,
                 0f,
-                _comfortMode ? 0f : _visualRoll);
+                steadyView ? 0f : _visualRoll);
 
             _handlebarRig.localRotation = Quaternion.Euler(
                 0f,
                 Mathf.Sin(_bobPhase * 0.5f) * 0.7f * speedFactor,
                 -_visualRoll * 0.25f);
 
-            _camera.fieldOfView = _comfortMode ? 68f : Mathf.Lerp(_camera.fieldOfView, Mathf.Lerp(64f, 74f, speedFactor),
-                1f - Mathf.Exp(-deltaTime * 2.5f));
-            _camera.transform.localPosition = Vector3.zero;
-            _camera.transform.localRotation = Quaternion.identity;
+            if (_headTracking == null)
+            {
+                _camera.fieldOfView = _comfortMode ? 68f : Mathf.Lerp(_camera.fieldOfView, Mathf.Lerp(64f, 74f, speedFactor),
+                    1f - Mathf.Exp(-deltaTime * 2.5f));
+                _camera.transform.localPosition = Vector3.zero;
+                _camera.transform.localRotation = Quaternion.identity;
+            }
 
             UpdateWind(speedFactor);
         }
@@ -121,6 +129,10 @@ namespace VirtualRide.Core
             _camera.allowHDR = true;
             _camera.allowMSAA = true;
             cameraObject.AddComponent<AudioListener>();
+#if UNITY_ANDROID && !UNITY_EDITOR
+            _camera.allowHDR = false;
+            _headTracking = cameraObject.AddComponent<QuestHeadPoseTracking>();
+#endif
         }
 
         private void BuildHandlebars()

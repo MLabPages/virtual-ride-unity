@@ -28,7 +28,7 @@ namespace VirtualRide.Input
     /// Windows BLE Cycling Speed and Cadence (CSC) input.
     /// BLE access is isolated in the small Windows Runtime bridge process.
     /// </summary>
-    public sealed class BluetoothCadenceInput : MonoBehaviour, IRideInputSource
+    public sealed class BluetoothCadenceInput : MonoBehaviour, IBluetoothCadenceInput
     {
         private const string BridgeRelativePath = "Bluetooth/VirtualRideBleBridge.exe";
         private const float CadenceTimeoutSeconds = 2.5f;

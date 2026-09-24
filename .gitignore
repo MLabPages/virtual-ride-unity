@@ -11,6 +11,8 @@
 [Mm]emoryCaptures/
 [Rr]ecordings/
 QA/
+# Android (Quest) native build intermediates
+.utmp/
 
 # IDE files
 .vs/

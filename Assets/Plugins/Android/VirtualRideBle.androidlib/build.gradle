@@ -1,0 +1,29 @@
+apply plugin: 'com.android.library'
+
+// Unity 6000.5 exports these project properties. No root template or dependency edits.
+def unityCompileSdk = getProperty('unity.compileSdkVersion') as int
+def unityTargetSdk = getProperty('unity.targetSdkVersion') as int
+if (unityCompileSdk < 33 || unityTargetSdk < 31) {
+    throw new GradleException('VirtualRide BLE requires compile SDK >= 33 and target SDK >= 31.')
+}
+
+android {
+    namespace 'com.virtualride.ble'
+    compileSdk unityCompileSdk
+    buildToolsVersion getProperty('unity.buildToolsVersion')
+    defaultConfig {
+        minSdk Math.max(23, getProperty('unity.minSdkVersion') as int)
+        targetSdk unityTargetSdk
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = ['src/main/java']
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
