@@ -17,6 +17,9 @@ namespace VirtualRide.UI
         private GUIStyle _smallStyle;
         private GUIStyle _warningStyle;
         private GUIStyle _buttonStyle;
+        private GUIStyle _compactButtonStyle;
+        private GUIStyle _compactPrimaryButtonStyle;
+        private GUIStyle _compactDangerButtonStyle;
         private GUIStyle _primaryButtonStyle;
         private GUIStyle _dangerButtonStyle;
         private GUIStyle _statusStyle;
@@ -93,16 +96,16 @@ namespace VirtualRide.UI
             bool modal = _app.HelpVisible || _app.ResearchPanelVisible || responseTest.HasResults ||
                 _app.BluetoothPanelVisible;
             GUI.enabled = !modal && !responseTest.IsRunning;
-            if (!_app.MinimalHud)
+            if (!modal && !_app.MinimalHud)
             {
                 DrawTopHud(width);
                 DrawRouteProgress(width);
                 DrawStatus(width, height);
                 DrawControls(width, height);
             }
-            else DrawImmersiveControls(width, height);
+            else if (!modal) DrawImmersiveControls(width, height);
 
-            if (!_app.MinimalHud && ReferenceEquals(_app.ActiveInput, _app.CameraInput))
+            if (!modal && !_app.MinimalHud && ReferenceEquals(_app.ActiveInput, _app.CameraInput))
             {
                 DrawCameraPanel(width, height);
             }
@@ -224,7 +227,7 @@ namespace VirtualRide.UI
         private void DrawTopHud(float width)
         {
             bool unvalidated = _app.ActiveInputIsUnvalidatedMeasurement;
-            Rect panel = new Rect(28f, 24f, 460f, unvalidated ? 176f : 151f);
+            Rect panel = new Rect(28f, 24f, 460f, unvalidated ? 190f : 164f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.88f));
 
             GUI.Label(new Rect(50f, 36f, 280f, 75f), _app.DisplaySpeedKph.ToString("0.0"), _speedStyle);
@@ -239,14 +242,14 @@ namespace VirtualRide.UI
 
             string rideTime = FormatTime(_app.Session.MovingSeconds);
             string distance = (_app.Session.DistanceMetres / 1000f).ToString("0.00") + " km";
-            GUI.Label(new Rect(52f, 109f, 410f, 28f), $"{cadence}    {distance}    {rideTime}", _bodyStyle);
-            GUI.Label(new Rect(52f, 139f, 410f, 25f),
+            GUI.Label(new Rect(52f, 116f, 410f, 28f), $"{cadence}    {distance}    {rideTime}", _bodyStyle);
+            GUI.Label(new Rect(52f, 146f, 410f, 25f),
                 $"平均 {_app.Session.AverageSpeedKph:0.0}  ・  最高 {_app.Session.MaximumSpeedKph:0.0} km/h",
                 _smallStyle);
 
             if (unvalidated)
             {
-                GUI.Label(new Rect(52f, 164f, 410f, 24f), ValidationNotice(), _warningStyle);
+                GUI.Label(new Rect(52f, 172f, 410f, 24f), ValidationNotice(), _warningStyle);
             }
         }
 
@@ -274,7 +277,7 @@ namespace VirtualRide.UI
                 inputLine += "  ※未検証";
             }
 
-            GUI.Label(new Rect(panel.x + 22f, panel.y + 77f, panel.width - 44f, 25f), inputLine, _smallStyle);
+            GUI.Label(new Rect(panel.x + 22f, panel.y + 75f, panel.width - 44f, 37f), inputLine, _smallStyle);
         }
 
         private void DrawStatus(float width, float height)
@@ -287,14 +290,14 @@ namespace VirtualRide.UI
                     : new Color(0.06f, 0.16f, 0.18f, 0.88f);
 
             float statusWidth = Mathf.Min(650f, width - 56f);
-            int charactersPerLine = Mathf.Max(1, Mathf.FloorToInt(statusWidth / _statusStyle.fontSize));
             string statusText = sample.Status ?? string.Empty;
-            float lineCount = Mathf.Ceil(statusText.Length / (float)charactersPerLine);
-            float statusHeight = Mathf.Clamp(lineCount * (_statusStyle.fontSize + 2f) + 8f, 38f, 70f);
+            float statusHeight = Mathf.Clamp(
+                _statusStyle.CalcHeight(new GUIContent(statusText), statusWidth - 24f) + 12f, 42f, 110f);
             Rect statusRect = new Rect((width - statusWidth) * 0.5f,
                 height - statusHeight - 90f, statusWidth, statusHeight);
             DrawPanel(statusRect, statusColor);
-            GUI.Label(statusRect, statusText, _statusStyle);
+            GUI.Label(new Rect(statusRect.x + 12f, statusRect.y + 6f,
+                statusRect.width - 24f, statusRect.height - 12f), statusText, _statusStyle);
         }
 
         private string ValidationNotice()
@@ -308,6 +311,9 @@ namespace VirtualRide.UI
 
         private void DrawControls(float width, float height)
         {
+            GUIStyle controlStyle = _questSurface != null ? _compactButtonStyle : _buttonStyle;
+            GUIStyle activeStyle = _questSurface != null ? _compactPrimaryButtonStyle : _primaryButtonStyle;
+            GUIStyle recordingStyle = _questSurface != null ? _compactDangerButtonStyle : _dangerButtonStyle;
             float panelWidth = Mathf.Min(1050f, width - 56f);
             Rect panel = new Rect((width - panelWidth) * 0.5f, height - 79f, panelWidth, 58f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.91f));
@@ -315,32 +321,32 @@ namespace VirtualRide.UI
             float x = panel.x + 13f;
             float y = panel.y + 10f;
             if (UiButton(new Rect(x, y, 142f, 38f), _app.SupportsRelayInput ? "Quest USB" : "カメラ計測",
-                    ReferenceEquals(_app.ActiveInput, _app.CameraInput) ? _primaryButtonStyle : _buttonStyle))
+                    ReferenceEquals(_app.ActiveInput, _app.CameraInput) ? activeStyle : controlStyle))
             {
                 _app.UseCameraInput();
             }
 
             x += 150f;
             if (UiButton(new Rect(x, y, 142f, 38f), "キーボード",
-                    ReferenceEquals(_app.ActiveInput, _app.KeyboardInput) ? _primaryButtonStyle : _buttonStyle))
+                    ReferenceEquals(_app.ActiveInput, _app.KeyboardInput) ? activeStyle : controlStyle))
             {
                 _app.UseKeyboardInput();
             }
 
             x += 150f;
-            if (UiButton(new Rect(x, y, 48f, 38f), "−", _buttonStyle))
+            if (UiButton(new Rect(x, y, 48f, 38f), "−", controlStyle))
             {
                 _app.AdjustKeyboardSpeed(-2f);
             }
 
             x += 54f;
-            if (UiButton(new Rect(x, y, 48f, 38f), "＋", _buttonStyle))
+            if (UiButton(new Rect(x, y, 48f, 38f), "＋", controlStyle))
             {
                 _app.AdjustKeyboardSpeed(2f);
             }
 
             x += 60f;
-            if (UiButton(new Rect(x, y, 116f, 38f), _app.IsPaused ? "再開" : "一時停止", _buttonStyle))
+            if (UiButton(new Rect(x, y, 116f, 38f), _app.IsPaused ? "再開" : "一時停止", controlStyle))
             {
                 _app.TogglePause();
             }
@@ -349,24 +355,24 @@ namespace VirtualRide.UI
             if (_app.SupportsRelayInput)
             {
                 if (UiButton(new Rect(x, y, 90f, 38f), "PC中継",
-                        ReferenceEquals(_app.ActiveInput, _app.RelayInput) ? _primaryButtonStyle : _buttonStyle))
+                        ReferenceEquals(_app.ActiveInput, _app.RelayInput) ? activeStyle : controlStyle))
                 {
                     _app.UseRelayInput();
                 }
             }
-            else if (UiButton(new Rect(x, y, 90f, 38f), "全画面", _buttonStyle))
+            else if (UiButton(new Rect(x, y, 90f, 38f), "全画面", controlStyle))
             {
                 _app.ToggleFullscreen();
             }
 
             x += 98f;
-            if (UiButton(new Rect(x, y, 90f, 38f), "使い方", _buttonStyle))
+            if (UiButton(new Rect(x, y, 90f, 38f), "使い方", controlStyle))
             {
                 _app.ToggleHelp();
             }
 
             x += 98f;
-            if (UiButton(new Rect(x, y, 46f, 38f), _app.WindEnabled ? "音" : "消音", _buttonStyle))
+            if (UiButton(new Rect(x, y, 46f, 38f), _app.WindEnabled ? "音" : "消音", controlStyle))
             {
                 _app.ToggleWind();
             }
@@ -374,13 +380,13 @@ namespace VirtualRide.UI
             x += 54f;
             if (UiButton(new Rect(x, y, 126f, 38f),
                 _app.ResearchRecorder.IsRecording ? "● 記録中" : "実験記録",
-                _app.ResearchRecorder.IsRecording ? _dangerButtonStyle : _buttonStyle))
+                _app.ResearchRecorder.IsRecording ? recordingStyle : controlStyle))
             {
                 _app.ToggleResearchPanel();
             }
 
             x += 134f;
-            if (UiButton(new Rect(x, y, 104f, 38f), "BLEセンサー", _buttonStyle))
+            if (UiButton(new Rect(x, y, 104f, 38f), "BLEセンサー", controlStyle))
             {
                 _app.ShowBluetoothPanel();
             }
@@ -475,7 +481,7 @@ namespace VirtualRide.UI
             }
 
             float badgeY = !_app.MinimalHud && width < 1520f
-                ? (_app.ActiveInputIsUnvalidatedMeasurement ? 208f : 183f)
+                ? (_app.ActiveInputIsUnvalidatedMeasurement ? 226f : 198f)
                 : 24f;
             Rect badge = new Rect(width * 0.5f - 210f, badgeY, 420f, 40f);
             DrawPanel(badge, new Color(0.78f, 0.16f, 0.13f, 0.94f));
@@ -499,34 +505,33 @@ namespace VirtualRide.UI
             bool modal = _app.ResearchPanelVisible || _app.HelpVisible;
             float y = modal ? 8f
                 : _app.ResearchRecorder.IsRecording && !_app.MinimalHud && width < 1520f
-                    ? (_app.ActiveInputIsUnvalidatedMeasurement ? 258f : 232f)
+                    ? (_app.ActiveInputIsUnvalidatedMeasurement ? 276f : 247f)
                     : 210f;
             float bannerWidth = Mathf.Min(600f, width - 56f);
-            int charactersPerLine = Mathf.Max(1, Mathf.FloorToInt(bannerWidth / _statusStyle.fontSize));
-            int lineCount = Mathf.Max(1, Mathf.CeilToInt(
-                _app.BlockedActionMessage.Length / (float)charactersPerLine));
-            float bannerHeight = modal ? 44f
-                : Mathf.Clamp(lineCount * (_statusStyle.fontSize + 2f) + 8f, 44f, 70f);
+            float bannerHeight = Mathf.Clamp(
+                _statusStyle.CalcHeight(new GUIContent(_app.BlockedActionMessage), bannerWidth - 24f) + 12f,
+                44f, modal ? 80f : 110f);
             Rect banner = new Rect((width - bannerWidth) * 0.5f, y, bannerWidth, bannerHeight);
             DrawPanel(banner, new Color(0.82f, 0.45f, 0.10f, 0.95f));
-            GUI.Label(banner, _app.BlockedActionMessage, _statusStyle);
+            GUI.Label(new Rect(banner.x + 12f, banner.y + 6f,
+                banner.width - 24f, banner.height - 12f), _app.BlockedActionMessage, _statusStyle);
         }
 
         private void DrawCameraPanel(float width, float height)
         {
-            Rect panel = new Rect(28f, 210f, 318f, 400f);
+            Rect panel = new Rect(28f, 226f, 318f, 424f);
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.91f));
             GUI.Label(new Rect(panel.x + 18f, panel.y + 11f, panel.width - 36f, 27f), "ペダル確認", _headingStyle);
 
             CameraCadenceInput camera = _app.CameraInput;
-            if (UiButton(new Rect(panel.x + 18f, panel.y + 44f, 34f, 34f), "◀", _buttonStyle))
+            if (UiButton(new Rect(panel.x + 18f, panel.y + 44f, 34f, 34f), "◀", _compactButtonStyle))
             {
                 _app.TrySelectAdjacentCamera(-1);
             }
 
             GUI.Label(new Rect(panel.x + 58f, panel.y + 44f, panel.width - 116f, 34f),
                 camera.SelectedDeviceLabel, _cameraNameStyle);
-            if (UiButton(new Rect(panel.xMax - 52f, panel.y + 44f, 34f, 34f), "▶", _buttonStyle))
+            if (UiButton(new Rect(panel.xMax - 52f, panel.y + 44f, 34f, 34f), "▶", _compactButtonStyle))
             {
                 _app.TrySelectAdjacentCamera(1);
             }
@@ -600,9 +605,9 @@ namespace VirtualRide.UI
                 _app.TryRestartCamera();
             }
 
-            GUI.Label(new Rect(panel.x + 18f, panel.y + 352f, panel.width - 36f, 20f),
-                "枠内のペダルの動きだけを計測・映像は保存しません", _smallStyle);
-            GUI.Label(new Rect(panel.x + 18f, panel.y + 372f, panel.width - 36f, 24f),
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 352f, panel.width - 36f, 40f),
+                "枠内の動きだけを計測します。\n映像は保存しません。", _smallStyle);
+            GUI.Label(new Rect(panel.x + 18f, panel.y + 396f, panel.width - 36f, 24f),
                 ValidationNotice(), _warningStyle);
         }
 
@@ -672,13 +677,13 @@ namespace VirtualRide.UI
                 "漕ぐ速さに合わせて、Unityで生成した田園コースを進みます。\nキーボード、カメラ、Bluetoothケイデンスセンサーを選べます。", _bodyStyle);
 
             GUI.Label(new Rect(card.x + 38f, card.y + 146f, card.width - 76f, 29f), "すぐ試す", _headingStyle);
-            GUI.Label(new Rect(card.x + 38f, card.y + 176f, card.width - 76f, 72f),
+            GUI.Label(new Rect(card.x + 38f, card.y + 176f, card.width - 76f, 90f),
                 "1. 「キーボードで試す」を押します\n2. ↑ または W で速度を上げます\n3. ↓ または S で速度を下げます（Spaceで停止／再開）", _bodyStyle);
 
-            GUI.Label(new Rect(card.x + 38f, card.y + 258f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
-            GUI.Label(new Rect(card.x + 38f, card.y + 288f, card.width - 76f, 120f),
+            GUI.Label(new Rect(card.x + 38f, card.y + 274f, card.width - 76f, 29f), "ルームバイクで使う", _headingStyle);
+            GUI.Label(new Rect(card.x + 38f, card.y + 306f, card.width - 76f, 132f),
                 _app.SupportsRelayInput
-                    ? "1. PC内蔵カメラはWindows版で計測し「Questへ送信」をON\n2. Questでは下部の「PC中継」を選びます\n3. BK9Cは「BLEセンサー」から直接接続できます\n4. 手を向けて人差し指と親指をつまむと選択できます"
+                    ? "1. PCカメラ: Windows版で計測し「Questへ送信」をON\n2. Questでは下の「PC中継」を選びます\n3. BK9Cは「BLEセンサー」から直接接続します\n4. 手を向けて指をつまむと選択できます"
                     : "1. USBカメラを使う場合は「カメラ計測」を選び、左の ◀ ▶ で選択します\n2. ケイデンスセンサーは下部の「BLEセンサー」から検索して選びます\n3. カメラは計測範囲を調整し、センサーはペダルを回して起動します\n4. rpm が表示されたら、その速さでコースを進みます", _bodyStyle);
 
             GUI.Label(new Rect(card.x + 38f, card.y + cardHeight - 168f, card.width - 76f, 58f),
@@ -767,8 +772,8 @@ namespace VirtualRide.UI
                     GUI.Label(new Rect(card.x + 260f, card.y + 424f, card.width - 298f, 30f),
                         "非表示でも計測は続きます", _smallStyle);
                 }
-                GUI.Label(new Rect(card.x + 38f, card.y + 464f, card.width - 76f, 40f),
-                    "視点・表示・音・映像の速度・ペダル映像は記録中固定。ペダル映像を隠しても計測は続きます。試行時間には一時停止中の時間も含みます。",
+                GUI.Label(new Rect(card.x + 38f, card.y + 462f, card.width - 76f, 42f),
+                    "記録中は表示・音・映像速度などの設定を固定します。\nペダル映像の非表示中も計測します。一時停止中も試行時間に含みます。",
                     _smallStyle);
             }
             else
@@ -1134,6 +1139,9 @@ namespace VirtualRide.UI
             _buttonStyle = MakeButtonStyle(_roundedTexture, new Color(0.96f, 1f, 0.99f));
             _primaryButtonStyle = MakeButtonStyle(_primaryTexture, Color.white);
             _dangerButtonStyle = MakeButtonStyle(_dangerTexture, Color.white);
+            _compactButtonStyle = MakeCompactButtonStyle(_buttonStyle);
+            _compactPrimaryButtonStyle = MakeCompactButtonStyle(_primaryButtonStyle);
+            _compactDangerButtonStyle = MakeCompactButtonStyle(_dangerButtonStyle);
             _textFieldStyle = new GUIStyle(GUI.skin.textField)
             {
                 font = _font,
@@ -1176,6 +1184,15 @@ namespace VirtualRide.UI
             style.active.textColor = Color.white;
             style.focused.textColor = textColor;
             return style;
+        }
+
+        private static GUIStyle MakeCompactButtonStyle(GUIStyle source)
+        {
+            return new GUIStyle(source)
+            {
+                fontSize = 14,
+                padding = new RectOffset(4, 4, 5, 5)
+            };
         }
 
         private static void DrawPanel(Rect rect, Color color)

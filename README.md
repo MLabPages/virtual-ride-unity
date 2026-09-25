@@ -29,7 +29,7 @@
 
 Quest版では手をHUDへ向け、親指と人差し指をつまむとボタンを選べます。Touchコントローラーを使う場合はHUDへ向けてトリガーを押します。いずれもビルド後にQuest実機で位置と反応を確認してください。
 
-PC内蔵カメラを使う場合はPCでWindows版を起動し、「カメラ計測」を選び、実験設定の「Questへ送信: ON」を押します。Quest版は「PC中継」を選びます。PCとQuestは同じWi-FiかiPhoneテザリングへ接続してください。Quest側の「Quest USB」はQuestへ直接接続したカメラ用で、PC内蔵カメラは表示されません。Quest USBカメラの認識は実機未検証です。中継するのは速度・回転数などの数値だけで、カメラ映像は送信しません。
+PC内蔵カメラを使う場合は、PCで `Builds/Windows/VirtualRide.exe` を起動します。「カメラ計測」を選び、映像を確認してから実験設定の「Questへ送信: ON」を押してください。Quest版は「PC中継」を選びます。PCとQuestは同じWi-FiかiPhoneテザリングへ接続してください。接続しない場合はWindows版の「QuestのIP」欄にQuestのIPアドレスを入力します。`Builds/Quest/VirtualRide.apk` はQuestにインストールするAndroid用ファイルで、PCでは起動しません。Quest側の「Quest USB」はQuestへ直接接続したカメラ用で、PC内蔵カメラは表示されません。Quest USBカメラの認識は実機未検証です。中継するのは速度・回転数などの数値だけで、カメラ映像は送信しません。
 
 ## 操作
 
