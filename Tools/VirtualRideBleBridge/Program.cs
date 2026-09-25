@@ -31,7 +31,7 @@ namespace VirtualRideBleBridge
                     }
                     catch (Exception exception)
                     {
-                        BleBridge.Write("ERROR\t" + exception.Message);
+                        BleBridge.Write("ERROR\t" + BleBridge.SafeField(exception.Message));
                     }
                 }
             }
@@ -70,9 +70,16 @@ namespace VirtualRideBleBridge
         {
             lock (OutputLock)
             {
-                Console.WriteLine(message.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' '));
+                // Tabs separate protocol fields. Removing them makes Unity ignore every
+                // DEVICE/STATE/ERROR line, leaving the discovery list empty.
+                Console.WriteLine(message.Replace('\r', ' ').Replace('\n', ' '));
                 Console.Out.Flush();
             }
+        }
+
+        public static string SafeField(string value)
+        {
+            return (value ?? string.Empty).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
         }
 
         public bool HandleCommand(string line)
@@ -148,7 +155,7 @@ namespace VirtualRideBleBridge
             }
             catch (Exception exception)
             {
-                Write("ERROR\tBLE scan failed: " + exception.Message);
+                Write("ERROR\tBLE scan failed: " + SafeField(exception.Message));
             }
         }
 
@@ -165,7 +172,7 @@ namespace VirtualRideBleBridge
             }
 
             _lastAdvertisementAt[args.BluetoothAddress] = now;
-            string name = args.Advertisement.LocalName ?? string.Empty;
+            string name = SafeField(args.Advertisement.LocalName);
             Write(string.Join("\t", "DEVICE", args.BluetoothAddress.ToString("X12", CultureInfo.InvariantCulture),
                 args.RawSignalStrengthInDBm.ToString(CultureInfo.InvariantCulture), name));
         }
@@ -200,7 +207,7 @@ namespace VirtualRideBleBridge
                     return;
                 }
 
-                _connectedName = string.IsNullOrWhiteSpace(_device.Name) ? "BLE cadence sensor" : _device.Name;
+                _connectedName = string.IsNullOrWhiteSpace(_device.Name) ? "BLE cadence sensor" : SafeField(_device.Name);
                 GattDeviceServicesResult servicesResult = await AwaitWinRt<GattDeviceServicesResult>(
                     _device.GetGattServicesAsync(BluetoothCacheMode.Uncached));
                 if (servicesResult.Status != GattCommunicationStatus.Success)
@@ -265,7 +272,7 @@ namespace VirtualRideBleBridge
             catch (Exception exception)
             {
                 DisconnectCurrent();
-                Write("ERROR\tBLE connection failed: " + exception.Message);
+                Write("ERROR\tBLE connection failed: " + SafeField(exception.Message));
             }
         }
 
@@ -313,7 +320,7 @@ namespace VirtualRideBleBridge
             }
             catch (Exception exception)
             {
-                Write("ERROR\tInvalid CSC measurement: " + exception.Message);
+                Write("ERROR\tInvalid CSC measurement: " + SafeField(exception.Message));
             }
         }
 

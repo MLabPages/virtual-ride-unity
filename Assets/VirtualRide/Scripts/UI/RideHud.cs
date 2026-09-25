@@ -38,6 +38,7 @@ namespace VirtualRide.UI
         private string _eventNote = "";
         private string _formMessage = "";
         private string _relayAddressText;
+        private int _bluetoothPage;
         private string _keyboardFieldName = string.Empty;
         private TouchScreenKeyboard _touchScreenKeyboard;
         private QuestHudSurface _questSurface;
@@ -406,19 +407,37 @@ namespace VirtualRide.UI
             DrawPanel(panel, new Color(0.025f, 0.055f, 0.065f, 0.98f));
             GUI.Label(new Rect(panel.x + 28f, panel.y + 20f, cardWidth - 56f, 40f),
                 "Bluetoothケイデンスセンサー", _headingStyle);
-            GUI.Label(new Rect(panel.x + 28f, panel.y + 62f, cardWidth - 56f, 34f),
+            GUI.Label(new Rect(panel.x + 28f, panel.y + 62f, cardWidth - 56f, 48f),
                 _app.BluetoothInput.Status, _bodyStyle);
-            GUI.Label(new Rect(panel.x + 28f, panel.y + 98f, cardWidth - 56f, 42f),
-                "BK9Cをペダルに取り付けて動かし、一覧から選んでください。検索は約12秒です。",
+            GUI.Label(new Rect(panel.x + 28f, panel.y + 112f, cardWidth - 56f, 42f),
+                "BK9Cの絶縁シートを外し、回して青点滅を確認。回しながら再検索してください。",
                 _smallStyle);
 
             List<BluetoothCadenceDevice> devices = _app.BluetoothInput.Devices;
-            float rowY = panel.y + 150f;
+            devices.Sort((left, right) =>
+            {
+                int preferred = IsKnownCadenceSensor(right.Name).CompareTo(IsKnownCadenceSensor(left.Name));
+                return preferred != 0 ? preferred : right.SignalStrength.CompareTo(left.SignalStrength);
+            });
+            const int pageSize = 4;
+            int pageCount = Mathf.Max(1, (devices.Count + pageSize - 1) / pageSize);
+            _bluetoothPage = Mathf.Clamp(_bluetoothPage, 0, pageCount - 1);
+            GUI.Label(new Rect(panel.x + 30f, panel.y + 155f, 260f, 27f),
+                $"検出 {devices.Count} 件  ・  {_bluetoothPage + 1}/{pageCount} ページ", _smallStyle);
+            if (pageCount > 1)
+            {
+                if (UiButton(new Rect(panel.xMax - 132f, panel.y + 151f, 44f, 29f), "◀", _compactButtonStyle))
+                    _bluetoothPage = Mathf.Max(0, _bluetoothPage - 1);
+                if (UiButton(new Rect(panel.xMax - 78f, panel.y + 151f, 44f, 29f), "▶", _compactButtonStyle))
+                    _bluetoothPage = Mathf.Min(pageCount - 1, _bluetoothPage + 1);
+            }
+            float rowY = panel.y + 185f;
             float rowHeight = 45f;
-            int rows = Mathf.Min(devices.Count, 5);
+            int start = _bluetoothPage * pageSize;
+            int rows = Mathf.Min(devices.Count - start, pageSize);
             for (int i = 0; i < rows; i++)
             {
-                BluetoothCadenceDevice device = devices[i];
+                BluetoothCadenceDevice device = devices[start + i];
                 Rect row = new Rect(panel.x + 24f, rowY + i * rowHeight, cardWidth - 48f, rowHeight - 3f);
                 DrawPanel(row, new Color(0.08f, 0.15f, 0.17f, 0.94f));
                 string shortAddress = device.Address.Length > 4
@@ -437,12 +456,12 @@ namespace VirtualRide.UI
                 string emptyMessage = _app.BluetoothInput.IsScanning
                     ? "検索中です。センサーを回して起動してください。"
                     : "近くのセンサーがここに表示されます。";
-                GUI.Label(new Rect(panel.x + 30f, rowY + 20f, cardWidth - 60f, 36f), emptyMessage, _smallStyle);
+                GUI.Label(new Rect(panel.x + 30f, rowY + 12f, cardWidth - 60f, 36f), emptyMessage, _smallStyle);
             }
 
             if (_app.BluetoothInput.IsConnected)
             {
-                GUI.Label(new Rect(panel.x + 28f, panel.y + 390f, cardWidth - 56f, 30f),
+                GUI.Label(new Rect(panel.x + 28f, panel.y + 373f, cardWidth - 56f, 30f),
                     "接続中: " + _app.BluetoothInput.ConnectedDeviceName, _bodyStyle);
             }
 
@@ -470,6 +489,14 @@ namespace VirtualRide.UI
             {
                 _app.HideBluetoothPanel();
             }
+        }
+
+        private static bool IsKnownCadenceSensor(string name)
+        {
+            return !string.IsNullOrEmpty(name) &&
+                (name.IndexOf("BK9C", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 name.IndexOf("CAD70", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 name.IndexOf("S314", System.StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private void DrawResearchBadge(float width)

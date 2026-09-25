@@ -51,7 +51,7 @@ PC内蔵カメラを使う場合は、PCで `Builds/Windows/VirtualRide.exe` を
 
 画面下のボタンでも同じ操作ができます。設定・使い方が開いている間は文字キーや矢印による走行操作を無効にします。記録中の F8 / F9 は設定画面内でも使えます。
 
-下部の「BLEセンサー」から周辺機器を検索し、標準CSC対応センサーを選んで接続できます。BK9Cの実機接続はセンサー到着後に確認してください。
+下部の「BLEセンサー」から周辺機器を検索し、標準CSC対応センサーを選んで接続できます。BK9Cは初回に電池の絶縁シートを外し、回して青点滅を確認してください。一覧は4件ずつページを切り替えられます。BK9C実機との接続・回転数の追従は未確認です。
 
 ## 実験データを記録する
 
@@ -128,7 +128,7 @@ Unityメニューの `Tools > Virtual Ride > Build Windows` を選ぶと、`Buil
 
 ## 専用センサーへの拡張
 
-走行部分は `IRideInputSource` だけを参照します。Windows版はBLE CSC標準サービス（`0x1816` / `0x2A5B`）を読む接続画面を備えています。BK9C実機が未到着のため実機接続と測定性能は未検証です。詳しくは [Docs/SENSOR_INTEGRATION.md](Docs/SENSOR_INTEGRATION.md) を参照してください。
+走行部分は `IRideInputSource` だけを参照します。Windows版はBLE CSC標準サービス（`0x1816` / `0x2A5B`）を読む接続画面を備えています。BK9C実機との接続と測定性能は未検証です。詳しくは [Docs/SENSOR_INTEGRATION.md](Docs/SENSOR_INTEGRATION.md) を参照してください。
 
 ## 現時点の注意
 
