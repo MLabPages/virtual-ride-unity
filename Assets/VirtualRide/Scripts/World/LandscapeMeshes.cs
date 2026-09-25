@@ -91,8 +91,10 @@ namespace VirtualRide.World
         {
             float r=Mathf.Sqrt(x*x/(315f*315f)+z*z/(245f*245f));
             float rise=Mathf.SmoothStep(0,1,Mathf.InverseLerp(1.02f,2f,r));
-            float broad=Mathf.PerlinNoise(x*.0034f+11.7f,z*.0034f+7.3f);
-            float detail=Mathf.PerlinNoise(x*.011f+23,z*.011f+41);
+            // PerlinNoise may return values slightly outside 0..1. A negative base in
+            // Pow(...,1.8) is NaN, and 0*NaN stays NaN, which broke the whole terrain on Quest.
+            float broad=Mathf.Clamp01(Mathf.PerlinNoise(x*.0034f+11.7f,z*.0034f+7.3f));
+            float detail=Mathf.Clamp01(Mathf.PerlinNoise(x*.011f+23,z*.011f+41));
             return -.04f+rise*(20+Mathf.Pow(broad,1.8f)*225+detail*22);
         }
 

@@ -57,6 +57,7 @@ public final class BleCscClient {
     private Runnable scanDeadline;
     private Runnable connectionDeadline;
     private boolean scanning;
+    private int receivedScanCallbacks;
     private boolean connected;
     private boolean closed;
     private String state = "offline";
@@ -79,9 +80,11 @@ public final class BleCscClient {
     /** includeOtherDevices helps sensors whose advertisements omit the service UUID. */
     public synchronized boolean beginScan(boolean includeOtherDevices) {
         if (closed) return false;
+        if (scanning) return true;
         stopScanInternal();
         disconnectInternal();
         devices.clear();
+        receivedScanCallbacks = 0;
         error = "";
         if (!ready(true)) return false;
         try {
@@ -126,6 +129,7 @@ public final class BleCscClient {
 
     private synchronized void receiveScan(ScanCallback source, ScanResult result) {
         if (closed || !scanning || source != scanCallback || result == null) return;
+        receivedScanCallbacks++;
         try {
             BluetoothDevice device = result.getDevice();
             String address = device.getAddress(); // RAM only. Never used in an error or state message.
@@ -269,6 +273,8 @@ public final class BleCscClient {
             result.put("deviceName", deviceName);
             result.put("rpm", connected ? cadence.rpm(now) : 0);
             result.put("ageMs", connected ? cadence.ageMs(now) : -1);
+            result.put("receivedScanCallbacks", receivedScanCallbacks);
+            result.put("detectedDeviceCount", devices.size());
             JSONArray list = new JSONArray();
             for (Map.Entry<String, DeviceEntry> item : devices.entrySet()) {
                 DeviceEntry device = item.getValue();

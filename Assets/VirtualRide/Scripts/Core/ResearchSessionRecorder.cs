@@ -437,6 +437,11 @@ namespace VirtualRide.Core
                 "  \"pedalPreviewVisible\": " + (_pedalPreviewVisible ? "true" : "false") + ",\n" +
                 "  \"displayAccelerationKphPerSecond\": " + Number(VirtualRideApp.DisplayAccelerationKphPerSecond) + ",\n" +
                 "  \"displayDecelerationKphPerSecond\": " + Number(VirtualRideApp.DisplayDecelerationKphPerSecond) + ",\n" +
+                "  \"speedMapping\": { \"version\": \"" + CadenceSpeedMapping.Version +
+                "\", \"baseMetresPerRevolution\": " + Number(CadenceSpeedMapping.BaseMetresPerRevolution) +
+                ", \"progressiveStartRpm\": " + Number(CadenceSpeedMapping.ProgressiveStartRpm) +
+                ", \"progressiveFullRpm\": " + Number(CadenceSpeedMapping.ProgressiveFullRpm) +
+                ", \"topMetresPerRevolution\": " + Number(CadenceSpeedMapping.TopMetresPerRevolution) + " },\n" +
                 "  \"routeStartMetres\": 0,\n" +
                 "  \"elapsedIncludesPauses\": true,\n" +
                 "  \"camera\": {\n" +

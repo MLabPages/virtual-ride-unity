@@ -257,7 +257,7 @@ namespace VirtualRide.Core
 
         private float ExpectedSpeedKph()
         {
-            return TargetRpm * _app.CameraInput.MetersPerRevolution * 60f / 1000f;
+            return CadenceSpeedMapping.SpeedKph(TargetRpm, _app.CameraInput.MetersPerRevolution);
         }
 
         private void LogFrame(float now, RideInputSample sample, float display)
@@ -307,6 +307,12 @@ namespace VirtualRide.Core
             builder.Append("  \"metersPerRevolution\": ").Append(Number(camera.MetersPerRevolution)).Append(",\n");
             builder.Append("  \"displayAccelerationKphPerSecond\": ").Append(Number(VirtualRideApp.DisplayAccelerationKphPerSecond)).Append(",\n");
             builder.Append("  \"displayDecelerationKphPerSecond\": ").Append(Number(VirtualRideApp.DisplayDecelerationKphPerSecond)).Append(",\n");
+            builder.Append("  \"speedMapping\": { \"version\": \"").Append(CadenceSpeedMapping.Version)
+                .Append("\", \"baseMetresPerRevolution\": ").Append(Number(CadenceSpeedMapping.BaseMetresPerRevolution))
+                .Append(", \"progressiveStartRpm\": ").Append(Number(CadenceSpeedMapping.ProgressiveStartRpm))
+                .Append(", \"progressiveFullRpm\": ").Append(Number(CadenceSpeedMapping.ProgressiveFullRpm))
+                .Append(", \"topMetresPerRevolution\": ").Append(Number(CadenceSpeedMapping.TopMetresPerRevolution))
+                .Append(" },\n");
             builder.Append("  \"protocol\": { \"prepareSeconds\": ").Append(Number(PrepareSeconds))
                 .Append(", \"pedalSeconds\": ").Append(Number(PedalSeconds))
                 .Append(", \"stopSeconds\": ").Append(Number(StopSeconds))

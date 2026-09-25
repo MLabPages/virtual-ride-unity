@@ -82,7 +82,7 @@ namespace VirtualRide.Input
                 {
                     bool fresh = _hasCadence && Time.unscaledTime - _lastCadenceAt <= CadenceTimeoutSeconds;
                     float rpm = fresh ? _cadenceRpm : 0f;
-                    float speed = Mathf.Clamp(rpm * 4.2f * 60f / 1000f, 0f, 45f);
+                    float speed = CadenceSpeedMapping.SpeedKph(rpm);
                     string status = fresh
                         ? _deviceName + " ・ " + Mathf.RoundToInt(rpm) + " rpm"
                         : _deviceName + " 接続中 ・ ペダリング待ち";

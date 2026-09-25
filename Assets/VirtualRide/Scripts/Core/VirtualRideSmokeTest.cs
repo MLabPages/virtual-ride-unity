@@ -540,7 +540,7 @@ namespace VirtualRide.Core
                 "\"markerType\": \"resume\"",
                 "\"markerType\": \"instruction\"",
                 "\"eventsFile\":",
-                "\"visualRevision\": \"valley-2026.09\"", "\"comfortMode\": true", "\"minimalHud\": false", "\"routeStartMetres\": 0"
+                "\"visualRevision\": \"valley-zones-2026.09\"", "\"speedMapping\"", "\"comfortMode\": true", "\"minimalHud\": false", "\"routeStartMetres\": 0"
             };
 
             for (int i = 0; i < required.Length; i++)

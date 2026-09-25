@@ -7,7 +7,6 @@ namespace VirtualRide.Input
         private const float MinimumSpeed = 0f;
         private const float MaximumSpeed = 40f;
         private const float ChangePerSecond = 9f;
-        private const float MetersPerRevolution = 4.2f;
 
         private float _speedKph;
         private bool _isActive;
@@ -22,7 +21,7 @@ namespace VirtualRide.Input
             get
             {
                 float cadence = _speedKph > 0.1f
-                    ? _speedKph * 1000f / (MetersPerRevolution * 60f)
+                    ? CadenceSpeedMapping.CadenceForSpeed(_speedKph)
                     : -1f;
                 string status = _speedKph > 0.1f
                     ? "試運転中（↑↓ または W/S で調整）"

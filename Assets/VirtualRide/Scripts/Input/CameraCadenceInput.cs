@@ -605,7 +605,7 @@ namespace VirtualRide.Input
             if (_estimator.HasCadence)
             {
                 _currentRpm = _estimator.Rpm;
-                _targetSpeed = _currentRpm * MetersPerRevolution * 60f / 1000f;
+                _targetSpeed = CadenceSpeedMapping.SpeedKph(_currentRpm, MetersPerRevolution);
                 _confidence = _estimator.Confidence;
                 SetStatus(RideInputState.Detected, $"検出中: {Mathf.RoundToInt(_currentRpm)} rpm");
                 return;

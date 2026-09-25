@@ -8,7 +8,7 @@ namespace VirtualRide.World
 {
     public sealed class ScenicWorldBuilder
     {
-        public const string VisualRevision = "valley-2026.09";
+        public const string VisualRevision = "valley-zones-2026.09";
         private Mesh[] _treeTrunks;
         private Mesh[] _treeCrowns;
         private readonly RideRoute _route;
@@ -35,6 +35,12 @@ namespace VirtualRide.World
             builder.CreateFields();
             builder.CreateVergeDetails();
             builder.CreateLandmarks();
+            builder.CreateSpeedCues();
+            builder.CreateForestConifers();
+            builder.CreateLakeBoat();
+            builder.CreateVillageStreet();
+            builder.CreateMeadowWindmill();
+            builder.CreateAutumnAvenue();
             return worldObject.transform;
         }
 
@@ -260,7 +266,8 @@ namespace VirtualRide.World
                 float progress = i / (float)_route.Count;
                 bool villageGap = progress > 0.43f && progress < 0.67f;
                 bool lakeGap = progress > 0.24f && progress < 0.42f;
-                if (villageGap || lakeGap)
+                bool avenueGap = progress > 0.845f;
+                if (villageGap || lakeGap || avenueGap)
                 {
                     continue;
                 }
@@ -557,6 +564,238 @@ namespace VirtualRide.World
             }
         }
 
+        // Zone scenery (valley-zones-2026.09). Everything is deterministic from the fixed seed,
+        // so every participant passes the same sequence. Each group is one merged,
+        // vertex-coloured mesh to keep Quest draw calls low.
+
+        /// <summary>Reflector posts close to the road give a clear sense of speed (optic flow).</summary>
+        private void CreateSpeedCues()
+        {
+            var posts = new LandscapeMeshes();
+            float offset = _route.RoadHalfWidth + 1.25f;
+            float jetty = _route.TotalLength * 0.32f;
+            Color white = new Color(0.92f, 0.92f, 0.88f);
+            Color reflector = new Color(0.96f, 0.46f, 0.12f);
+            for (float distance = 4f; distance < _route.TotalLength - 4f; distance += 16f)
+            for (int side = -1; side <= 1; side += 2)
+            {
+                float along = distance + (side < 0 ? 0f : 8f);
+                float progress = along / _route.TotalLength;
+                bool village = progress > 0.44f && progress < 0.655f;
+                bool nearJetty = side < 0 && Mathf.Abs(along - jetty) < 7f;
+                if (village || nearJetty) continue;
+
+                _route.Evaluate(along, out Vector3 point, out _, out Vector3 right);
+                Vector3 foot = point + right * side * offset;
+                foot.y = 0f;
+                posts.Branch(foot, foot + Vector3.up * 0.98f, 0.055f, 0.05f, white);
+                posts.Branch(foot + Vector3.up * 0.74f, foot + Vector3.up * 0.9f, 0.064f, 0.064f, reflector);
+                posts.Branch(foot + Vector3.up * 0.98f, foot + Vector3.up * 1.02f, 0.05f, 0.005f, white);
+            }
+
+            MeshObject("Roadside reflector posts", _root, posts.Finish("Reflector posts"),
+                VertexMaterial("Reflector posts", 0.3f), ShadowCastingMode.Off);
+        }
+
+        /// <summary>Dark conifers mixed into the first forest stretch.</summary>
+        private void CreateForestConifers()
+        {
+            var trunks = new LandscapeMeshes();
+            var needles = new LandscapeMeshes();
+            float end = _route.TotalLength * 0.215f;
+            for (float distance = 3f; distance < end; distance += 6.5f)
+            for (int side = -1; side <= 1; side += 2)
+            {
+                if (_random.NextDouble() < 0.3) continue;
+                _route.Evaluate(distance + RandomRange(-2f, 2f), out Vector3 point, out _, out Vector3 right);
+                Vector3 foot = point + right * side * RandomRange(6.2f, 17f);
+                foot.y = 0f;
+                float height = RandomRange(7f, 11.5f);
+                trunks.Branch(foot, foot + Vector3.up * height * 0.35f, 0.16f, 0.12f, new Color(0.30f, 0.19f, 0.11f));
+                Color green = Color.Lerp(new Color(0.07f, 0.24f, 0.13f), new Color(0.13f, 0.33f, 0.17f), RandomRange(0f, 1f));
+                for (int tier = 0; tier < 3; tier++)
+                {
+                    float bottom = height * (0.22f + tier * 0.22f);
+                    float top = bottom + height * (0.42f - tier * 0.06f);
+                    Color tint = green * (0.92f + tier * 0.07f);
+                    tint.a = 1f;
+                    needles.Branch(foot + Vector3.up * bottom, foot + Vector3.up * top,
+                        height * (0.26f - tier * 0.06f), 0.03f, tint);
+                }
+            }
+
+            MeshObject("Forest conifer trunks", _root, trunks.Finish("Conifer trunks"), VertexMaterial("Conifer bark"));
+            MeshObject("Forest conifers", _root, needles.Finish("Conifer needles"), VertexMaterial("Conifer needles"));
+        }
+
+        /// <summary>A small moored sailing boat on the lake.</summary>
+        private void CreateLakeBoat()
+        {
+            _route.Evaluate(_route.TotalLength * 0.32f, out Vector3 routePoint, out Vector3 forward, out Vector3 right);
+            Vector3 center = routePoint - right * 48f;
+            Vector3 boat = center - forward * 14f - right * 8f;
+            float yaw = Quaternion.LookRotation(forward, Vector3.up).eulerAngles.y + 20f;
+            Transform parent = new GameObject("Lake boat").transform;
+            parent.SetParent(_root, false);
+            CreateField(parent, boat + Vector3.up * 0.16f, new Vector3(1.5f, 0.42f, 4.2f), yaw,
+                GetMaterial("Boat hull", new Color(0.62f, 0.20f, 0.14f), 0.25f, 0f));
+            CreateField(parent, boat + Vector3.up * 1.9f, new Vector3(0.08f, 3.2f, 0.08f), yaw,
+                GetMaterial("Jetty wood", new Color(.45f, .34f, .22f), .1f, 0));
+            CreateField(parent, boat + Vector3.up * 2.0f, new Vector3(0.04f, 2.4f, 1.9f), yaw,
+                GetMaterial("Sail canvas", new Color(0.95f, 0.93f, 0.86f), 0.1f, 0f));
+        }
+
+        /// <summary>Street lamps along the village road and a clock tower landmark.</summary>
+        private void CreateVillageStreet()
+        {
+            var lamps = new LandscapeMeshes();
+            float start = _route.TotalLength * 0.445f;
+            float end = _route.TotalLength * 0.65f;
+            int index = 0;
+            for (float distance = start; distance < end; distance += 14f, index++)
+            {
+                int side = index % 2 == 0 ? -1 : 1;
+                _route.Evaluate(distance, out Vector3 point, out _, out Vector3 right);
+                Vector3 foot = point + right * side * (_route.RoadHalfWidth + 1.5f);
+                foot.y = 0f;
+                Vector3 top = foot + Vector3.up * 3.4f;
+                lamps.Branch(foot, top, 0.07f, 0.05f, new Color(0.12f, 0.20f, 0.18f));
+                lamps.Branch(top, top - right * side * 0.55f + Vector3.up * 0.12f, 0.04f, 0.04f, new Color(0.12f, 0.20f, 0.18f));
+                lamps.Crown(top - right * side * 0.6f, Vector3.one * 0.2f, index, new Color(1f, 0.93f, 0.72f));
+            }
+
+            MeshObject("Village street lamps", _root, lamps.Finish("Street lamps"), VertexMaterial("Street lamps", 0.4f),
+                ShadowCastingMode.Off);
+
+            _route.Evaluate(_route.TotalLength * 0.555f, out Vector3 towerRoute, out _, out Vector3 towerRight);
+            Vector3 towerFoot = towerRoute - towerRight * 27f;
+            towerFoot.y = 0f;
+            float towerYaw = Quaternion.LookRotation(towerRight, Vector3.up).eulerAngles.y;
+            Transform tower = new GameObject("Village clock tower").transform;
+            tower.SetParent(_root, false);
+            CreateField(tower, towerFoot + Vector3.up * 6.5f, new Vector3(3.6f, 13f, 3.6f), towerYaw,
+                GetMaterial("Cream walls", new Color(0.83f, 0.75f, 0.58f), 0.08f, 0f));
+            CreateField(tower, towerFoot + towerRight * 1.82f + Vector3.up * 10.4f, new Vector3(1.7f, 1.7f, 0.08f), towerYaw,
+                GetMaterial("Clock face", new Color(0.96f, 0.95f, 0.9f), 0.3f, 0f));
+            CreateField(tower, towerFoot + towerRight * 1.87f + Vector3.up * 10.6f, new Vector3(0.09f, 0.7f, 0.04f), towerYaw,
+                GetMaterial("Clock hands", new Color(0.1f, 0.1f, 0.1f), 0.2f, 0f));
+            var roof = new LandscapeMeshes();
+            roof.Branch(towerFoot + Vector3.up * 13f, towerFoot + Vector3.up * 17.6f, 2.8f, 0.05f, new Color(0.40f, 0.14f, 0.10f));
+            MeshObject("Clock tower roof", tower, roof.Finish("Tower roof"), VertexMaterial("Tower roof"));
+        }
+
+        /// <summary>A turning windmill and colourful flower strips in the meadow.</summary>
+        private void CreateMeadowWindmill()
+        {
+            _route.Evaluate(_route.TotalLength * 0.755f, out Vector3 routePoint, out _, out Vector3 right);
+            Vector3 foot = routePoint - right * 36f;
+            foot.y = 0f;
+            Vector3 toRoad = right;
+            var body = new LandscapeMeshes();
+            body.Branch(foot, foot + Vector3.up * 12f, 2.3f, 1.4f, new Color(0.90f, 0.86f, 0.76f));
+            body.Branch(foot + Vector3.up * 12f, foot + Vector3.up * 14.4f, 1.75f, 0.05f, new Color(0.45f, 0.16f, 0.12f));
+            Transform windmill = new GameObject("Meadow windmill").transform;
+            windmill.SetParent(_root, false);
+            MeshObject("Windmill body", windmill, body.Finish("Windmill body"), VertexMaterial("Windmill body"));
+
+            Transform sails = new GameObject("Windmill sails").transform;
+            sails.SetParent(windmill, false);
+            sails.SetPositionAndRotation(foot + Vector3.up * 11.2f + toRoad * 1.9f, Quaternion.LookRotation(toRoad, Vector3.up));
+            Material sailMaterial = GetMaterial("Sail canvas", new Color(0.95f, 0.93f, 0.86f), 0.1f, 0f);
+            Material woodMaterial = GetMaterial("Jetty wood", new Color(.45f, .34f, .22f), .1f, 0);
+            CreateField(sails, Vector3.zero, new Vector3(0.7f, 0.7f, 0.5f), 0f, woodMaterial, true);
+            for (int blade = 0; blade < 4; blade++)
+            {
+                Transform arm = new GameObject("Sail arm").transform;
+                arm.SetParent(sails, false);
+                arm.localRotation = Quaternion.Euler(0f, 0f, blade * 90f);
+                CreateField(arm, new Vector3(0f, 3.4f, 0.1f), new Vector3(0.14f, 6.6f, 0.1f), 0f, woodMaterial, true);
+                CreateField(arm, new Vector3(0.52f, 3.9f, 0.12f), new Vector3(0.9f, 5.2f, 0.04f), 0f, sailMaterial, true);
+            }
+
+            SceneryMotion motion = sails.gameObject.AddComponent<SceneryMotion>();
+            motion.LocalAxis = Vector3.forward;
+            motion.DegreesPerSecond = 22f;
+
+            Color[] palette =
+            {
+                new Color(0.55f, 0.42f, 0.78f),
+                new Color(0.84f, 0.24f, 0.18f),
+                new Color(0.95f, 0.78f, 0.18f)
+            };
+            Material[] fieldMaterials =
+            {
+                GetMaterial("Lavender strip", palette[0], 0.03f, 0f),
+                GetMaterial("Poppy strip", palette[1], 0.03f, 0f),
+                GetMaterial("Sunflower strip", palette[2], 0.03f, 0f)
+            };
+            Transform strips = new GameObject("Meadow flower strips").transform;
+            strips.SetParent(_root, false);
+            int stripIndex = 0;
+            for (float distance = _route.TotalLength * 0.675f; distance < _route.TotalLength * 0.835f; distance += 26f, stripIndex++)
+            {
+                _route.Evaluate(distance, out Vector3 point, out Vector3 forward, out Vector3 stripRight);
+                int side = stripIndex % 2 == 0 ? 1 : -1;
+                Vector3 center = point + stripRight * side * 14.5f;
+                center.y = 0.014f;
+                CreateField(strips, center, new Vector3(8.5f, 0.02f, 21f),
+                    Quaternion.LookRotation(forward, Vector3.up).eulerAngles.y, fieldMaterials[stripIndex % fieldMaterials.Length]);
+            }
+
+            var flowers = new LandscapeMeshes();
+            for (int i = 0; i < 260; i++)
+            {
+                float distance = _route.TotalLength * RandomRange(0.67f, 0.84f);
+                _route.Evaluate(distance, out Vector3 point, out _, out Vector3 flowerRight);
+                int side = _random.Next(2) == 0 ? -1 : 1;
+                Vector3 p = point + flowerRight * side * RandomRange(4.3f, 9f);
+                p.y = 0.3f + RandomRange(0f, 0.18f);
+                flowers.Crown(p, Vector3.one * 0.085f, i, palette[_random.Next(palette.Length)]);
+            }
+
+            MeshObject("Meadow flowers", _root, flowers.Finish("Meadow flowers"), VertexMaterial("Meadow flowers"),
+                ShadowCastingMode.Off);
+        }
+
+        /// <summary>A golden autumn avenue on the final hill stretch.</summary>
+        private void CreateAutumnAvenue()
+        {
+            var trunks = new LandscapeMeshes();
+            var crowns = new LandscapeMeshes();
+            Color[] leaves =
+            {
+                new Color(0.93f, 0.68f, 0.18f),
+                new Color(0.86f, 0.42f, 0.14f),
+                new Color(0.95f, 0.82f, 0.36f)
+            };
+            int seed = 0;
+            for (float distance = _route.TotalLength * 0.852f; distance < _route.TotalLength * 0.993f; distance += 9f)
+            for (int side = -1; side <= 1; side += 2)
+            {
+                _route.Evaluate(distance, out Vector3 point, out _, out Vector3 right);
+                Vector3 foot = point + right * side * 6.4f;
+                foot.y = 0f;
+                float height = RandomRange(6.5f, 8.5f);
+                trunks.Branch(foot, foot + Vector3.up * height * 0.62f, 0.15f, 0.09f, new Color(0.86f, 0.84f, 0.78f));
+                for (int part = 0; part < 3; part++)
+                {
+                    Vector3 offset = new Vector3(RandomRange(-0.8f, 0.8f), height * 0.72f + part * 0.45f, RandomRange(-0.8f, 0.8f));
+                    Color tint = leaves[_random.Next(leaves.Length)] * RandomRange(0.9f, 1.05f);
+                    tint.a = 1f;
+                    crowns.Crown(foot + offset, new Vector3(1.7f, 2.0f, 1.7f) * RandomRange(0.85f, 1.1f), seed++, tint);
+                }
+            }
+
+            MeshObject("Autumn avenue trunks", _root, trunks.Finish("Avenue trunks"), VertexMaterial("Birch bark"));
+            MeshObject("Autumn avenue leaves", _root, crowns.Finish("Avenue leaves"), VertexMaterial("Autumn leaves"));
+        }
+
+        private Material VertexMaterial(string materialName, float smoothness = 0.02f)
+        {
+            Material material = GetMaterial(materialName, Color.white, smoothness, 0f);
+            material.SetFloat("_VertexTint", 1f);
+            return material;
+        }
 
         private Material GetMaterial(string materialName, Color color, float smoothness, float metallic)
         {

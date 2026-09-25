@@ -54,7 +54,7 @@ namespace VirtualRide.Input
                 {
                     bool fresh = Time.realtimeSinceStartupAsDouble < _expiresAt;
                     float rpm = fresh ? _rpm : 0f;
-                    float speed = Mathf.Clamp(rpm * 4.2f * 60f / 1000f, 0f, 45f);
+                    float speed = CadenceSpeedMapping.SpeedKph(rpm);
                     // Only a normalized model name can reach ride/research status.
                     string status = fresh ? _deviceName + " ・ " + Mathf.RoundToInt(rpm) + " rpm"
                         : _deviceName + " 接続中 ・ ペダリング待ち";
@@ -80,6 +80,9 @@ namespace VirtualRide.Input
         public bool BeginScan(bool includeOtherDevices)
         {
             if (_paused || !isActiveAndEnabled) return false;
+            // Repeated UI clicks must not discard an ongoing scan's devices or
+            // trigger Android's frequent-scan throttle.
+            if (_isScanning) return true;
             Disconnect();
 #if UNITY_ANDROID && !UNITY_EDITOR
             try
@@ -250,6 +253,8 @@ namespace VirtualRide.Input
             public string deviceName = string.Empty;
             public float rpm = 0;
             public long ageMs = -1;
+            public int receivedScanCallbacks = 0;
+            public int detectedDeviceCount = 0;
             public DeviceJson[] devices = Array.Empty<DeviceJson>();
         }
 
@@ -336,6 +341,9 @@ namespace VirtualRide.Input
                 _deviceName = snapshot.deviceName ?? string.Empty;
                 _error = string.IsNullOrEmpty(snapshot.error) ? string.Empty : TranslateError(snapshot.error);
                 _status = string.IsNullOrEmpty(_error) ? TranslateState(snapshot.state) : _error;
+                if (string.IsNullOrEmpty(_error) &&
+                    (snapshot.state == "scanning" || snapshot.state == "empty"))
+                    _status += $" 広告受信 {snapshot.receivedScanCallbacks}件 / 候補 {snapshot.detectedDeviceCount}件";
                 bool validRpm = !float.IsNaN(snapshot.rpm) && !float.IsInfinity(snapshot.rpm)
                     && snapshot.rpm >= 0 && snapshot.rpm <= 220;
                 _rpm = validRpm ? snapshot.rpm : 0;
