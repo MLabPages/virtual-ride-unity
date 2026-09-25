@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using UnityEngine;
 using VirtualRide.Input;
+using VirtualRide.World;
 
 namespace VirtualRide.Core
 {
@@ -392,8 +393,9 @@ namespace VirtualRide.Core
             _app.KeyboardInput.SetSpeed(0f);
             if (_app.IsPaused) _app.TogglePause();
             _app.ToggleMinimalHud();
-            float[] progress = { .025f, .26f, .50f, .72f, .89f };
-            string[] names = { "forest", "lake", "village", "meadow", "hills" };
+            float signView = (DistanceSigns.SpacingMetres * 2f - 20f) / _app.Route.TotalLength;
+            float[] progress = { .025f, .26f, .50f, .72f, .89f, signView };
+            string[] names = { "forest", "lake", "village", "meadow", "hills", "distance-sign" };
             for (int i=0; i<progress.Length; i++)
             {
                 _app.PreviewRouteForTesting(progress[i]);
@@ -540,7 +542,8 @@ namespace VirtualRide.Core
                 "\"markerType\": \"resume\"",
                 "\"markerType\": \"instruction\"",
                 "\"eventsFile\":",
-                "\"visualRevision\": \"valley-zones-2026.09\"", "\"speedMapping\"", "\"comfortMode\": true", "\"minimalHud\": false", "\"routeStartMetres\": 0"
+                "\"visualRevision\": \"valley-zones-2026.09.2\"", "\"speedMapping\"", "\"distanceSignsVisible\": true",
+                "\"comfortMode\": true", "\"minimalHud\": false", "\"routeStartMetres\": 0"
             };
 
             for (int i = 0; i < required.Length; i++)

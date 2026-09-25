@@ -54,6 +54,7 @@ namespace VirtualRide.Core
         private string _videoSpeedMode = string.Empty;
         private float _fixedVideoSpeedKph;
         private bool _pedalPreviewVisible = true;
+        private bool _distanceSignsVisible = true;
         private bool _comfortMode;
         private bool _minimalHud;
         private bool _windEnabled;
@@ -339,6 +340,7 @@ namespace VirtualRide.Core
             _videoSpeedMode = app.IsVideoSpeedFixed ? "fixed" : "pedal_linked";
             _fixedVideoSpeedKph = app.FixedVideoSpeedKph;
             _pedalPreviewVisible = app.PedalPreviewVisible;
+            _distanceSignsVisible = app.DistanceSignsVisible;
 
             CameraCadenceInput camera = app.CameraInput;
             if (camera != null)
@@ -435,6 +437,7 @@ namespace VirtualRide.Core
                 "  \"videoSpeedMode\": \"" + Json(_videoSpeedMode) + "\",\n" +
                 "  \"fixedVideoSpeedKph\": " + (_videoSpeedMode == "fixed" ? Number(_fixedVideoSpeedKph) : "null") + ",\n" +
                 "  \"pedalPreviewVisible\": " + (_pedalPreviewVisible ? "true" : "false") + ",\n" +
+                "  \"distanceSignsVisible\": " + (_distanceSignsVisible ? "true" : "false") + ",\n" +
                 "  \"displayAccelerationKphPerSecond\": " + Number(VirtualRideApp.DisplayAccelerationKphPerSecond) + ",\n" +
                 "  \"displayDecelerationKphPerSecond\": " + Number(VirtualRideApp.DisplayDecelerationKphPerSecond) + ",\n" +
                 "  \"speedMapping\": { \"version\": \"" + CadenceSpeedMapping.Version +

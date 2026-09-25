@@ -33,6 +33,22 @@ namespace VirtualRide.World
         }
         private void Triangle(int a, int b, int c) { _triangles.Add(a); _triangles.Add(b); _triangles.Add(c); }
 
+        /// <summary>
+        /// Flat rectangle facing the viewer. axisX is the viewer's right, axisY the viewer's up;
+        /// the front face points toward the viewer (-Cross(axisX, axisY)).
+        /// </summary>
+        public void Quad(Vector3 center, Vector3 axisX, Vector3 axisY, float halfX, float halfY, Color color)
+        {
+            Vector3 normal = -Vector3.Cross(axisX, axisY).normalized;
+            int first = _vertices.Count;
+            Vertex(center - axisX * halfX - axisY * halfY, color, normal);
+            Vertex(center + axisX * halfX - axisY * halfY, color, normal);
+            Vertex(center - axisX * halfX + axisY * halfY, color, normal);
+            Vertex(center + axisX * halfX + axisY * halfY, color, normal);
+            Triangle(first + 2, first + 3, first + 1);
+            Triangle(first + 2, first + 1, first);
+        }
+
         public void Branch(Vector3 from, Vector3 to, float radius, float tip, Color color)
         {
             int first = _vertices.Count;

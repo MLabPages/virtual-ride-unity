@@ -780,9 +780,10 @@ namespace VirtualRide.UI
                 GUI.Label(new Rect(card.x + 38f, card.y + 262f, card.width - 76f, 52f),
                     "氏名は使わず、P001のような匿名IDにしてください。空欄または0秒は手動終了です。\n時間が来ると保存して走行を停止します。開始時は同じスタート地点に戻ります。",
                     _smallStyle);
-                if (UiButton(new Rect(card.x+38,card.y+328,210,38), _app.ComfortMode ? "視点: 揺れなし" : "視点: ゆるやかな揺れ", _buttonStyle)) _app.ToggleComfortMode();
-                if (UiButton(new Rect(card.x+260,card.y+328,210,38), _app.MinimalHud ? "表示: 景色に集中" : "表示: 計器あり", _buttonStyle)) _app.ToggleMinimalHud();
-                if (UiButton(new Rect(card.x+482,card.y+328,card.width-520,38), _app.WindEnabled ? "走行音: ON" : "走行音: OFF", _buttonStyle)) _app.ToggleWind();
+                if (UiButton(new Rect(card.x+38,card.y+328,170,38), _app.ComfortMode ? "視点: 揺れなし" : "視点: ゆるやかな揺れ", _compactButtonStyle)) _app.ToggleComfortMode();
+                if (UiButton(new Rect(card.x+216,card.y+328,170,38), _app.MinimalHud ? "表示: 景色に集中" : "表示: 計器あり", _compactButtonStyle)) _app.ToggleMinimalHud();
+                if (UiButton(new Rect(card.x+394,card.y+328,150,38), _app.WindEnabled ? "走行音: ON" : "走行音: OFF", _compactButtonStyle)) _app.ToggleWind();
+                if (UiButton(new Rect(card.x+552,card.y+328,card.width-590,38), _app.DistanceSignsVisible ? "距離看板: 表示" : "距離看板: なし", _compactButtonStyle)) _app.ToggleDistanceSigns();
                 DrawVideoSpeedControls(card);
                 if (UiButton(new Rect(card.x + 38f, card.y + 418f, 210f, 38f),
                     _app.PedalPreviewVisible ? "ペダル映像: 表示" : "ペダル映像: 非表示", _buttonStyle))

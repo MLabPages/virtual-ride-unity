@@ -42,6 +42,7 @@ namespace VirtualRide.Core
         private VideoSpeedMode _videoSpeedMode = VideoSpeedMode.PedalLinked;
         private float _fixedVideoSpeedKph = 15f;
         private bool _pedalPreviewVisible = true;
+        private bool _distanceSignsVisible = true;
         private string _blockedActionMessage = string.Empty;
         private float _blockedActionUntil;
 
@@ -90,6 +91,7 @@ namespace VirtualRide.Core
         public bool IsVideoSpeedFixed => _videoSpeedMode == VideoSpeedMode.Fixed;
         public float FixedVideoSpeedKph => _fixedVideoSpeedKph;
         public bool PedalPreviewVisible => _pedalPreviewVisible;
+        public bool DistanceSignsVisible => _distanceSignsVisible;
         public bool KeyboardControlsBlocked => _helpVisible || _researchPanelVisible || _bluetoothPanelVisible ||
             (_responseTest != null && (_responseTest.IsRunning || _responseTest.HasResults));
         public string InputModeName => _activeInput != null ? _activeInput.DisplayName : "入力なし";
@@ -124,6 +126,7 @@ namespace VirtualRide.Core
             GameObject rider = new GameObject("Rider");
             _rideController = rider.AddComponent<RideController>();
             _rideController.Initialize(_route);
+            new GameObject("Distance signs").AddComponent<DistanceSigns>().Initialize(this, _route);
 
             GameObject inputObject = new GameObject("Ride Inputs");
             _keyboardInput = inputObject.AddComponent<KeyboardRideInput>();
@@ -462,6 +465,12 @@ namespace VirtualRide.Core
         {
             if (IsInputLocked) { NotifyActionBlocked("記録中はペダル映像の表示を変更できません。"); return; }
             _pedalPreviewVisible = !_pedalPreviewVisible;
+        }
+
+        public void ToggleDistanceSigns()
+        {
+            if (IsInputLocked) { NotifyActionBlocked("記録中は距離看板の表示を変更できません。"); return; }
+            _distanceSignsVisible = !_distanceSignsVisible;
         }
 
         /// <summary>

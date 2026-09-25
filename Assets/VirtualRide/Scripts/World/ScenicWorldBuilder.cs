@@ -8,13 +8,20 @@ namespace VirtualRide.World
 {
     public sealed class ScenicWorldBuilder
     {
-        public const string VisualRevision = "valley-zones-2026.09";
+        public const string VisualRevision = "valley-zones-2026.09.2";
         private Mesh[] _treeTrunks;
         private Mesh[] _treeCrowns;
         private readonly RideRoute _route;
         private readonly Transform _root;
         private readonly Dictionary<string, Material> _materials = new Dictionary<string, Material>();
         private readonly System.Random _random = new System.Random(20260812);
+        // Footprints already taken by trees and landmarks: x, radius, z.
+        private readonly List<Vector3> _occupied = new List<Vector3>();
+        private Vector3 _windmillFoot;
+        private Vector3 _towerFoot;
+        private Vector3 _lakeCenter;
+        private Vector3 _lakeForward;
+        private Vector3 _lakeRight;
 
         private ScenicWorldBuilder(RideRoute route, Transform root)
         {
@@ -27,6 +34,7 @@ namespace VirtualRide.World
             GameObject worldObject = new GameObject("Scenic Virtual World");
             ScenicWorldBuilder builder = new ScenicWorldBuilder(route, worldObject.transform);
             builder.ConfigureEnvironment();
+            builder.ReserveLandmarkSpots();
             builder.CreateGround();
             builder.CreateRoad();
             builder.CreateLake();
@@ -285,18 +293,110 @@ namespace VirtualRide.World
                     Vector3 position = routePoint + right * side * offset;
                     position.y = 0f;
                     float scale = RandomRange(.8f, 1.35f);
+                    if (!TryReserve(position, 2.7f * scale))
+                    {
+                        continue;
+                    }
+
                     CreateTree(treeParent, position, scale, trunkMaterial, foliage[_random.Next(foliage.Length)]);
                 }
             }
 
             // A few distant groves make open stretches feel less empty.
-            for (int i = 0; i < 110; i++)
+            for (int i = 0; i < 150; i++)
             {
                 float angle = RandomRange(0f, Mathf.PI * 2f);
                 float radius = RandomRange(205f, 300f);
                 Vector3 position = new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius * 0.78f);
-                CreateTree(treeParent, position, RandomRange(1.1f, 2f), trunkMaterial,
-                    foliage[_random.Next(foliage.Length)]);
+                float scale = RandomRange(1.1f, 2f);
+                if (DistanceToRoute(position) < 16f || InsideLake(position, 8f) || !TryReserve(position, 2.7f * scale))
+                {
+                    continue;
+                }
+
+                CreateTree(treeParent, position, scale, trunkMaterial, foliage[_random.Next(foliage.Length)]);
+            }
+        }
+
+        /// <summary>Landmark and field footprints are reserved before any tree is placed.</summary>
+        private void ReserveLandmarkSpots()
+        {
+            _route.Evaluate(_route.TotalLength * 0.32f, out Vector3 lakeRoute, out _lakeForward, out _lakeRight);
+            _lakeCenter = lakeRoute - _lakeRight * 48f;
+
+            _route.Evaluate(_route.TotalLength * 0.755f, out Vector3 windmillRoute, out _, out Vector3 windmillRight);
+            _windmillFoot = windmillRoute - windmillRight * 36f;
+            _windmillFoot.y = 0f;
+            TryReserve(_windmillFoot, 6f);
+
+            _route.Evaluate(_route.TotalLength * 0.555f, out Vector3 towerRoute, out _, out Vector3 towerRight);
+            _towerFoot = towerRoute - towerRight * 27f;
+            _towerFoot.y = 0f;
+            TryReserve(_towerFoot, 3.5f);
+
+            foreach (FlowerStrip strip in MeadowStrips())
+            for (int part = -1; part <= 1; part++)
+            {
+                TryReserve(strip.Center + strip.Forward * part * 7f, 4.6f);
+            }
+        }
+
+        private bool TryReserve(Vector3 position, float radius)
+        {
+            foreach (Vector3 taken in _occupied)
+            {
+                float dx = position.x - taken.x;
+                float dz = position.z - taken.z;
+                float minimum = (radius + taken.y) * 0.8f;
+                if (dx * dx + dz * dz < minimum * minimum)
+                {
+                    return false;
+                }
+            }
+
+            _occupied.Add(new Vector3(position.x, radius, position.z));
+            return true;
+        }
+
+        private float DistanceToRoute(Vector3 position)
+        {
+            float best = float.MaxValue;
+            for (int i = 0; i < _route.Count; i++)
+            {
+                Vector3 point = _route.GetPoint(i);
+                float dx = position.x - point.x;
+                float dz = position.z - point.z;
+                best = Mathf.Min(best, dx * dx + dz * dz);
+            }
+
+            return Mathf.Sqrt(best);
+        }
+
+        private bool InsideLake(Vector3 position, float margin)
+        {
+            Vector3 local = position - _lakeCenter;
+            float along = Vector3.Dot(local, _lakeForward) / (66f + margin);
+            float across = Vector3.Dot(local, _lakeRight) / (40f + margin);
+            return along * along + across * across < 1f;
+        }
+
+        private struct FlowerStrip
+        {
+            public Vector3 Center;
+            public Vector3 Forward;
+            public int Index;
+        }
+
+        private IEnumerable<FlowerStrip> MeadowStrips()
+        {
+            int index = 0;
+            for (float distance = _route.TotalLength * 0.675f; distance < _route.TotalLength * 0.835f; distance += 26f, index++)
+            {
+                _route.Evaluate(distance, out Vector3 point, out Vector3 forward, out Vector3 right);
+                int side = index % 2 == 0 ? 1 : -1;
+                Vector3 center = point + right * side * 14.5f;
+                center.y = 0.014f;
+                yield return new FlowerStrip { Center = center, Forward = forward, Index = index };
             }
         }
 
@@ -367,6 +467,7 @@ namespace VirtualRide.World
                 int side = i % 3 == 0 ? -1 : 1;
                 Vector3 position = routePosition + right * side * RandomRange(11f, 20f);
                 position.y = 0f;
+                TryReserve(position, 3.5f);
                 CreateHouse(village, position, Quaternion.LookRotation(right * side, Vector3.up),
                     RandomRange(0.85f, 1.2f), walls[i % walls.Length], roof, windows);
             }
@@ -611,6 +712,11 @@ namespace VirtualRide.World
                 Vector3 foot = point + right * side * RandomRange(6.2f, 17f);
                 foot.y = 0f;
                 float height = RandomRange(7f, 11.5f);
+                if (!TryReserve(foot, height * 0.24f))
+                {
+                    continue;
+                }
+
                 trunks.Branch(foot, foot + Vector3.up * height * 0.35f, 0.16f, 0.12f, new Color(0.30f, 0.19f, 0.11f));
                 Color green = Color.Lerp(new Color(0.07f, 0.24f, 0.13f), new Color(0.13f, 0.33f, 0.17f), RandomRange(0f, 1f));
                 for (int tier = 0; tier < 3; tier++)
@@ -667,9 +773,8 @@ namespace VirtualRide.World
             MeshObject("Village street lamps", _root, lamps.Finish("Street lamps"), VertexMaterial("Street lamps", 0.4f),
                 ShadowCastingMode.Off);
 
-            _route.Evaluate(_route.TotalLength * 0.555f, out Vector3 towerRoute, out _, out Vector3 towerRight);
-            Vector3 towerFoot = towerRoute - towerRight * 27f;
-            towerFoot.y = 0f;
+            _route.Evaluate(_route.TotalLength * 0.555f, out _, out _, out Vector3 towerRight);
+            Vector3 towerFoot = _towerFoot;
             float towerYaw = Quaternion.LookRotation(towerRight, Vector3.up).eulerAngles.y;
             Transform tower = new GameObject("Village clock tower").transform;
             tower.SetParent(_root, false);
@@ -687,9 +792,8 @@ namespace VirtualRide.World
         /// <summary>A turning windmill and colourful flower strips in the meadow.</summary>
         private void CreateMeadowWindmill()
         {
-            _route.Evaluate(_route.TotalLength * 0.755f, out Vector3 routePoint, out _, out Vector3 right);
-            Vector3 foot = routePoint - right * 36f;
-            foot.y = 0f;
+            _route.Evaluate(_route.TotalLength * 0.755f, out _, out _, out Vector3 right);
+            Vector3 foot = _windmillFoot;
             Vector3 toRoad = right;
             var body = new LandscapeMeshes();
             body.Branch(foot, foot + Vector3.up * 12f, 2.3f, 1.4f, new Color(0.90f, 0.86f, 0.76f));
@@ -731,15 +835,11 @@ namespace VirtualRide.World
             };
             Transform strips = new GameObject("Meadow flower strips").transform;
             strips.SetParent(_root, false);
-            int stripIndex = 0;
-            for (float distance = _route.TotalLength * 0.675f; distance < _route.TotalLength * 0.835f; distance += 26f, stripIndex++)
+            foreach (FlowerStrip strip in MeadowStrips())
             {
-                _route.Evaluate(distance, out Vector3 point, out Vector3 forward, out Vector3 stripRight);
-                int side = stripIndex % 2 == 0 ? 1 : -1;
-                Vector3 center = point + stripRight * side * 14.5f;
-                center.y = 0.014f;
-                CreateField(strips, center, new Vector3(8.5f, 0.02f, 21f),
-                    Quaternion.LookRotation(forward, Vector3.up).eulerAngles.y, fieldMaterials[stripIndex % fieldMaterials.Length]);
+                CreateField(strips, strip.Center, new Vector3(8.5f, 0.02f, 21f),
+                    Quaternion.LookRotation(strip.Forward, Vector3.up).eulerAngles.y,
+                    fieldMaterials[strip.Index % fieldMaterials.Length]);
             }
 
             var flowers = new LandscapeMeshes();
@@ -775,6 +875,7 @@ namespace VirtualRide.World
                 _route.Evaluate(distance, out Vector3 point, out _, out Vector3 right);
                 Vector3 foot = point + right * side * 6.4f;
                 foot.y = 0f;
+                TryReserve(foot, 1.9f);
                 float height = RandomRange(6.5f, 8.5f);
                 trunks.Branch(foot, foot + Vector3.up * height * 0.62f, 0.15f, 0.09f, new Color(0.86f, 0.84f, 0.78f));
                 for (int part = 0; part < 3; part++)

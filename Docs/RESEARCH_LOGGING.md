@@ -106,7 +106,8 @@ CSVの文字列が空白を除いて `=` / `+` / `-` / `@` で始まる場合は
 - `startingInputDeviceName`（Bluetooth時の機器名。Bluetoothアドレスは保存しない）と `inputProtocol`（`Bluetooth LE CSC 0x1816/0x2A5B` など）
 - `inputLocked`: 常に `true`（この版のセッションは開始時に入力を固定する）
 - `applicationVersion`、`unityVersion`、`productName`、`companyName`、`platform`
-- `visualRevision`: 景観の版（現在 `valley-zones-2026.09`）。同じCSV形式でも景観が異なる試行を区別する
+- `visualRevision`: 景観の版（現在 `valley-zones-2026.09.2`）。同じCSV形式でも景観が異なる試行を区別する
+- `distanceSignsVisible`: 200 mごとの累計距離看板を表示したか。距離の情報はペース配分に影響しうるため、条件間で揃える
 - `speedMapping`: 回転数から速度への換算（版、基準4.2 m/回転、60〜110 rpmで6.0 m/回転まで増加）。換算が異なる試行を区別する
 - `comfortMode`（揺れなし・固定視野角68度）、`minimalHud`（景色に集中）、`windEnabled`（走行音）：開始時に固定した設定
 - `videoSpeedMode`: 景色の速度条件。`pedal_linked`（ペダル連動）または `fixed`（一定速度）。この項目がない要約JSONは、比較条件の機能より前の版で、すべてペダル連動
