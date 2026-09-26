@@ -126,8 +126,8 @@ namespace VirtualRide.Input
 
         public bool BeginScan()
         {
+            if (_isScanning) return true;
             _error = string.Empty;
-            _devices.Clear();
             if (!EnsureBridge()) return false;
             _isScanning = true;
             _status = "近くのBluetoothセンサーを検索しています…";

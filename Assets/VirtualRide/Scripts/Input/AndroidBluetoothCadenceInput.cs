@@ -83,7 +83,7 @@ namespace VirtualRide.Input
             // Repeated UI clicks must not discard an ongoing scan's devices or
             // trigger Android's frequent-scan throttle.
             if (_isScanning) return true;
-            Disconnect();
+            if (_isConnected) Disconnect();
 #if UNITY_ANDROID && !UNITY_EDITOR
             try
             {

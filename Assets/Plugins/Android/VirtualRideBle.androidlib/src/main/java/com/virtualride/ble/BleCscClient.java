@@ -66,6 +66,7 @@ public final class BleCscClient {
     private String deviceName = "";
 
     private static final class DeviceEntry {
+        long lastSeenAt;
         final BluetoothDevice device;
         String name;
         int rssi;
@@ -83,7 +84,9 @@ public final class BleCscClient {
         if (scanning) return true;
         stopScanInternal();
         disconnectInternal();
-        devices.clear();
+        // Retain candidates between searches within this foreground session.
+        long cutoff = SystemClock.elapsedRealtime() - 120000;
+        devices.values().removeIf(entry -> entry.lastSeenAt < cutoff);
         receivedScanCallbacks = 0;
         error = "";
         if (!ready(true)) return false;
@@ -108,7 +111,7 @@ public final class BleCscClient {
             if (!scanning) return false;
             final ScanCallback started = scanCallback;
             scanDeadline = () -> finishScan(started);
-            timer.postDelayed(scanDeadline, 10000);
+            timer.postDelayed(scanDeadline, 30000);
             return true;
         } catch (SecurityException ignored) { return fail("permission"); }
         catch (RuntimeException ignored) { return fail("scan_failed"); }
@@ -144,6 +147,7 @@ public final class BleCscClient {
             if (name == null || name.trim().isEmpty()) name = device.getName();
             if (name != null && !name.trim().isEmpty()) entry.name = displayName(name);
             if (entry.name == null) entry.name = "BLE sensor";
+            entry.lastSeenAt = SystemClock.elapsedRealtime();
             entry.rssi = result.getRssi();
             List<ParcelUuid> services = record == null ? null : record.getServiceUuids();
             entry.advertisesCsc |= services != null && services.contains(new ParcelUuid(CSC));
@@ -151,7 +155,7 @@ public final class BleCscClient {
         catch (RuntimeException ignored) { fail("scan_failed"); }
     }
 
-    /** Only devices in this instance's current scan can be connected. No arbitrary MAC lookup. */
+    /** Only devices observed by this instance can be connected. No arbitrary MAC lookup. */
     public synchronized boolean connect(String address) {
         if (closed) return false;
         DeviceEntry entry = devices.get(address);

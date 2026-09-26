@@ -61,6 +61,7 @@ namespace VirtualRideBleBridge
         private TypedEventHandler<GattCharacteristic, GattValueChangedEventArgs> _measurementHandler;
         private object _measurementToken;
         private int _scanGeneration;
+        private int _scanRequested;
         private bool _hasPreviousCrank;
         private ushort _previousCrankRevolutions;
         private ushort _previousCrankEventTime;
@@ -120,6 +121,7 @@ namespace VirtualRideBleBridge
 
         private void StartScan()
         {
+            if (Interlocked.Exchange(ref _scanRequested, 1) != 0) return;
             try
             {
                 if (_watcher == null)
@@ -136,25 +138,27 @@ namespace VirtualRideBleBridge
 
                 if (_watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
                 {
-                    _watcher.Stop();
+                    return; // Keep the active search and its deadline on repeated requests.
                 }
 
                 int generation = Interlocked.Increment(ref _scanGeneration);
                 _lastAdvertisementAt.Clear();
                 _watcher.Start();
                 Write("STATE\tSCANNING\tSearching for nearby Bluetooth LE devices");
-                Task.Delay(TimeSpan.FromSeconds(12)).ContinueWith(_ =>
+                Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
                 {
                     if (Interlocked.CompareExchange(ref _scanGeneration, generation, generation) == generation &&
                         _watcher != null && _watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
                     {
                         _watcher.Stop();
+                        Interlocked.Exchange(ref _scanRequested, 0);
                         Write("SCAN_DONE");
                     }
                 });
             }
             catch (Exception exception)
             {
+                Interlocked.Exchange(ref _scanRequested, 0);
                 Write("ERROR\tBLE scan failed: " + SafeField(exception.Message));
             }
         }
@@ -183,6 +187,7 @@ namespace VirtualRideBleBridge
         {
             if (args.Error != BluetoothError.Success)
             {
+                Interlocked.Exchange(ref _scanRequested, 0);
                 Write("ERROR\tBLE scan stopped: " + args.Error);
             }
         }
@@ -191,6 +196,7 @@ namespace VirtualRideBleBridge
         {
             try
             {
+                Interlocked.Exchange(ref _scanRequested, 0);
                 Interlocked.Increment(ref _scanGeneration);
                 if (_watcher != null && _watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
                 {
