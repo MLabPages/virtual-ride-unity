@@ -50,6 +50,20 @@ namespace VirtualRide.Core
 
         private IEnumerator Start()
         {
+            foreach (float yaw in new[] { -179f, 0f, 135f })
+            {
+                Quaternion head = Quaternion.Euler(25f, yaw, 18f);
+                Quaternion origin = QuestHeadPoseTracking.HorizontalOrigin(head);
+                Check(Vector3.Angle(origin * Vector3.up, Vector3.up) < 0.01f,
+                    "Quest recenter tilted the horizon");
+                Vector3 facing = Quaternion.Inverse(origin) * (head * Vector3.forward);
+                Check(Mathf.Abs(facing.x) < 0.001f && facing.z > 0f,
+                    "Quest recenter did not align horizontal heading");
+                Check(Mathf.Abs(facing.y - (head * Vector3.forward).y) < 0.001f,
+                    "Quest recenter removed natural head pitch");
+            }
+            Check(float.IsFinite(QuestHeadPoseTracking.HorizontalOrigin(Quaternion.Euler(90f, 30f, 0f)).w),
+                "Quest vertical gaze recenter produced an invalid rotation");
             Directory.CreateDirectory(_outputDirectory);
             yield return null;
             yield return new WaitForEndOfFrame();

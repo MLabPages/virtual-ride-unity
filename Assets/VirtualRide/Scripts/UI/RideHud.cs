@@ -148,6 +148,14 @@ namespace VirtualRide.UI
                 (_app.ActiveSample.State == RideInputState.Error || _app.ActiveSample.State == RideInputState.Offline))
                 DrawStatus(width, height);
 
+            if (_app.IsQuestBuild)
+            {
+                if (UiButton(new Rect(width * 0.5f - 140f, 22f, 280f, 48f),
+                    _app.IsRecentering ? "正面を向いてお待ちください" : "正面合わせ（2秒後）", _buttonStyle))
+                    _app.RequestRecenter();
+                GUI.Label(new Rect(width * 0.5f - 245f, 74f, 490f, 50f),
+                    "両手のピンチ / 左Xを1.5秒長押しでも操作\n合わせた後は一時停止から再開", _smallStyle);
+            }
             DrawQuestControllerPointer(width, height);
             GUI.matrix = previousMatrix;
             if (drawingToQuestPanel)
@@ -510,6 +518,7 @@ namespace VirtualRide.UI
             float badgeY = !_app.MinimalHud && width < 1520f
                 ? (_app.ActiveInputIsUnvalidatedMeasurement ? 226f : 198f)
                 : 24f;
+            if (_app.IsQuestBuild) badgeY = 132f;
             Rect badge = new Rect(width * 0.5f - 210f, badgeY, 420f, 40f);
             DrawPanel(badge, new Color(0.78f, 0.16f, 0.13f, 0.94f));
             string label = $"● 実験記録中  {FormatTime(recorder.RecordingElapsedSeconds)}";
@@ -535,6 +544,7 @@ namespace VirtualRide.UI
                     ? (_app.ActiveInputIsUnvalidatedMeasurement ? 276f : 247f)
                     : 210f;
             float bannerWidth = Mathf.Min(600f, width - 56f);
+            if (_app.IsQuestBuild) y = 180f;
             float bannerHeight = Mathf.Clamp(
                 _statusStyle.CalcHeight(new GUIContent(_app.BlockedActionMessage), bannerWidth - 24f) + 12f,
                 44f, modal ? 80f : 110f);
@@ -681,6 +691,7 @@ namespace VirtualRide.UI
             DrawPanel(card, new Color(0.02f, 0.05f, 0.06f, 0.94f));
             GUI.Label(new Rect(card.x + 25f, card.y + 24f, card.width - 50f, 46f), "一時停止", _headingStyle);
             GUI.Label(new Rect(card.x + 25f, card.y + 67f, card.width - 50f, 30f),
+                _app.IsQuestBuild ? "姿勢を整えて、下のボタンで再開します" :
                 "Spaceキーまたは下のボタンで再開します", _bodyStyle);
             if (UiButton(new Rect(card.x + 145f, card.y + 111f, 170f, 42f), "ライドを再開", _primaryButtonStyle))
             {

@@ -30,6 +30,30 @@ namespace VirtualRide.UI
         private bool _clickPending;
         private bool _clickConsumed;
         private int _updatedFrame = -1;
+        private float _recenterHold;
+        private bool _recenterHeld;
+
+        private void Update()
+        {
+            // Works even when the bicycle HUD is behind the user's head.
+            bool bothPinching = TryGetHandAim(MetaAimHand.left, 2, out _, out _, out bool left, out _) && left &&
+                TryGetHandAim(MetaAimHand.right, 1, out _, out _, out bool right, out _) && right;
+            InputDevice controller = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
+            bool xPressed = controller.isValid &&
+                controller.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primaryButton, out bool x) && x;
+            if (!bothPinching && !xPressed)
+            {
+                _recenterHold = 0f;
+                _recenterHeld = false;
+                return;
+            }
+            _recenterHold += Time.unscaledDeltaTime;
+            if (!_recenterHeld && _recenterHold >= 1.5f)
+            {
+                _recenterHeld = true;
+                GetComponent<VirtualRide.Core.VirtualRideApp>()?.RequestRecenter();
+            }
+        }
 
         public static QuestHudSurface Current { get; private set; }
         public RenderTexture Texture => _texture;

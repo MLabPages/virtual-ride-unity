@@ -108,7 +108,7 @@ namespace VirtualRide.Core
             if (!_hasOrigin)
             {
                 _originPosition = position;
-                _originRotation = rotation;
+                _originRotation = HorizontalOrigin(rotation);
                 _hasOrigin = true;
             }
 
@@ -121,6 +121,15 @@ namespace VirtualRide.Core
         {
             Quaternion inverseOrigin = Quaternion.Inverse(originRotation);
             return new Pose(inverseOrigin * (position - originPosition), inverseOrigin * rotation);
+        }
+
+        internal static Quaternion HorizontalOrigin(Quaternion rotation)
+        {
+            Vector3 forward = Vector3.ProjectOnPlane(rotation * Vector3.forward, Vector3.up);
+            // Looking straight up/down has no reliable heading; use the right axis.
+            if (forward.sqrMagnitude < 0.0001f)
+                forward = Vector3.Cross(rotation * Vector3.right, Vector3.up);
+            return Quaternion.LookRotation(forward.normalized, Vector3.up);
         }
 
         private void BindInputSubsystem()

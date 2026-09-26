@@ -315,9 +315,28 @@ namespace VirtualRide.Core
 
         public void TogglePause()
         {
+            if (IsRecentering && _paused) return;
             _paused = !_paused;
             if (_paused) StopMotion();
             if (IsInputLocked) AddResearchEventMarker(_paused ? "pause" : "resume");
+        }
+
+        public bool IsRecentering { get; private set; }
+
+        public void RequestRecenter()
+        {
+            if (!IsQuestBuild || IsRecentering) return;
+            if (!_paused) TogglePause();
+            StartCoroutine(RecenterAfterDelay());
+        }
+
+        private System.Collections.IEnumerator RecenterAfterDelay()
+        {
+            IsRecentering = true;
+            yield return new WaitForSecondsRealtime(2f);
+            _rideController.RecenterHeadTracking();
+            AddResearchEventMarker("view_recenter_requested");
+            IsRecentering = false;
         }
 
         public void ToggleHelp()
